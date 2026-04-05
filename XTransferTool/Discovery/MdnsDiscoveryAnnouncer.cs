@@ -23,7 +23,8 @@ public sealed class MdnsDiscoveryAnnouncer : IDiscoveryAnnouncer
             return Task.CompletedTask;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _sd = new ServiceDiscovery();
+        var ms = new MulticastService(DiscoveryDiagnostics.FilterMdnsInterfaces);
+        _sd = new ServiceDiscovery(ms);
 
         _profile = BuildProfile(identity, controlPort);
         _sd.Advertise(_profile);
@@ -85,12 +86,14 @@ public sealed class MdnsDiscoveryAnnouncer : IDiscoveryAnnouncer
     {
         var host = Dns.GetHostName();
         var ipv4 = DiscoveryDiagnostics.FormatLocalUnicastIPv4ForLog();
+        var mdnsIf = DiscoveryDiagnostics.FormatMdnsBindInterfacesForLog();
         Log.Information(
-            "[discovery] announce mDNS instance=\"{Instance}\" id={Id} controlPort={ControlPort} dnsHostname={Host} localUnicastIPv4=[{Ipv4}] (peers map SRV target hostname -> A/AAAA; compare with what the receiver logs as [discovery] resolved)",
+            "[discovery] announce mDNS instance=\"{Instance}\" id={Id} controlPort={ControlPort} dnsHostname={Host} mdnsIfacesIpv4=[{MdnsIf}] localUnicastIPv4=[{Ipv4}] (peers map SRV target hostname -> A/AAAA; compare with what the receiver logs as [discovery] resolved)",
             identity.InstanceName(),
             identity.Id,
             controlPort,
             host,
+            mdnsIf,
             ipv4);
     }
 
