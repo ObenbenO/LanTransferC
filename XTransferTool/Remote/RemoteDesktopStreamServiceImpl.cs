@@ -343,10 +343,25 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         private static string ChooseEncoder()
         {
             if (OperatingSystem.IsWindows())
-                return "-c:v hevc_nvenc";
+                return HasNvidiaCudaDriver() ? "-c:v hevc_nvenc" : "-c:v libx265";
             if (OperatingSystem.IsMacOS())
                 return "-c:v hevc_videotoolbox";
             return "-c:v libx265";
+        }
+
+        private static bool HasNvidiaCudaDriver()
+        {
+            try
+            {
+                var sys = Environment.SystemDirectory;
+                if (string.IsNullOrWhiteSpace(sys))
+                    return false;
+                return File.Exists(Path.Combine(sys, "nvcuda.dll"));
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static (string Bitrate, string Preset) QualityToParams(string preset)
