@@ -1,0 +1,4 @@
+发现： mDNS（Makaretu.Dns）
+控制/消息/传输： gRPC（Grpc.Net.*）+ Protobuf
+文件：gRPC streaming（先做）→ 后续再加断点续传/并发/校验
+远控：先做“远控 UI + 连接状态”，后续再接采集/编码

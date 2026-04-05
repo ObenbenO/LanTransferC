@@ -1,0 +1,264 @@
+syntax = "proto3";
+
+package xtransfer.control;
+
+option csharp_namespace = "XTransferTool.Control.Proto";
+
+service ControlService {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream EventEnvelope);
+}
+
+service MessagingService {
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+}
+
+message TagPath {
+  repeated string segments = 1;
+}
+
+message SendMessageRequest {
+  string requestId = 1;
+  string fromId = 2;
+
+  oneof to {
+    string toPeerId = 3;
+    TagPath toTagPath = 4;
+  }
+
+  string text = 5;              // 0..500
+  string transferId = 6;
+  repeated string fileNames = 7;
+  int64 tsMs = 8;
+}
+
+message SendMessageResponse {
+  bool accepted = 1;
+  string serverMessageId = 2;
+  bool deduped = 3;
+}
+
+// Payload for EventEnvelope.type == "inbox"
+message MessageReceivedEvent {
+  string serverMessageId = 1;
+  string fromId = 2;
+  string fromDisplay = 3;
+  string text = 4;
+  string transferId = 5;
+  repeated string fileNames = 6;
+  int64 tsMs = 7;
+}
+
+service FileTransferService {
+  rpc CreateTransfer(CreateTransferRequest) returns (CreateTransferResponse);
+  rpc UploadChunks(stream UploadChunkRequest) returns (UploadChunksResponse);
+  rpc CompleteTransfer(CompleteTransferRequest) returns (CompleteTransferResponse);
+}
+
+message TransferItemMeta {
+  string itemId = 1;
+  string fileName = 2;
+  int64 sizeBytes = 3;
+  bytes sha256 = 4;
+  int64 mtimeMs = 5;
+}
+
+message ResumeItemInfo {
+  string itemId = 1;
+  int64 receivedBytes = 2;
+}
+
+message CreateTransferRequest {
+  string requestId = 1;
+  string fromId = 2;
+
+  oneof to {
+    string toPeerId = 3;
+    TagPath toTagPath = 4;
+  }
+
+  string message = 5;
+  repeated TransferItemMeta items = 6;
+  string overwritePolicy = 7; // ask/rename/overwrite
+  bool wantResume = 8;
+  // Human-readable sender, e.g. 昵称（标签1 / 标签2）; shown in recipient inbox.
+  string fromDisplay = 9;
+}
+
+message CreateTransferResponse {
+  bool accepted = 1;
+  string transferId = 2;
+  bytes uploadToken = 3;
+  int32 chunkSizeBytes = 4;
+  repeated ResumeItemInfo resumeInfo = 5;
+  string reason = 6;
+}
+
+message UploadChunkRequest {
+  string transferId = 1;
+  bytes uploadToken = 2;
+  string itemId = 3;
+  int64 offsetBytes = 4;
+  bytes data = 5;
+  uint32 crc32c = 6;
+  bool isLastChunk = 7;
+}
+
+message UploadChunksResponse {
+  int64 acceptedBytes = 1;
+  int64 nextOffsetBytes = 2;
+  string status = 3; // ok/need-resume/failed
+  string reason = 4;
+}
+
+message CompletedItem {
+  string itemId = 1;
+  int64 sizeBytes = 2;
+  bytes sha256 = 3;
+}
+
+message CompleteTransferRequest {
+  string transferId = 1;
+  bytes uploadToken = 2;
+  repeated CompletedItem items = 3;
+}
+
+message ItemReceipt {
+  string itemId = 1;
+  string savedPath = 2;
+  bool deduped = 3;
+  string error = 4;
+}
+
+message CompleteTransferResponse {
+  string status = 1; // ok/failed/need-resume
+  string reason = 2;
+  repeated ItemReceipt receipts = 3;
+}
+
+// Payload for EventEnvelope.type == "inbox"
+message FileReceivedEvent {
+  string fromId = 1;
+  string fromDisplay = 2;
+  string transferId = 3;
+  string fileName = 4;
+  string savedPath = 5;
+  string message = 6;
+  int64 tsMs = 7;
+}
+
+message HandshakeRequest {
+  string clientId = 1;
+  string nickname = 2;
+  repeated string tags = 3;
+  string os = 4;
+  string appVersion = 5;
+  repeated string capabilities = 6;
+  bytes sessionNonce = 7; // 16-32 bytes
+}
+
+message HandshakeResponse {
+  string serverId = 1;
+  string nickname = 2;
+  repeated string tags = 3;
+  string os = 4;
+  string appVersion = 5;
+  repeated string capabilities = 6;
+  int64 serverTimeMs = 7;
+  bool accepted = 8;
+  string reason = 9;
+  string sessionId = 10;
+}
+
+message SubscribeEventsRequest {
+  string sessionId = 1;
+  string clientId = 2;
+  int64 sinceSeq = 3;
+}
+
+message EventEnvelope {
+  int64 seq = 1;
+  int64 tsMs = 2;
+  string type = 3;     // transfer/inbox/remote
+  bytes payload = 4;   // typed payload bytes (v1: empty)
+}
+
+// ---- Remote control (step-doc 12/13/14) ----
+
+service RemoteControlService {
+  rpc CreateSession(CreateRemoteSessionRequest) returns (CreateRemoteSessionResponse);
+  rpc Offer(RemoteOfferRequest) returns (RemoteOfferResponse);
+  rpc TrickleIce(stream IceCandidate) returns (stream IceCandidate);
+  rpc InputStream(stream RemoteInputEvent) returns (stream RemoteInputAck);
+  rpc SubscribeStats(SubscribeRemoteStatsRequest) returns (stream RemoteStatsEnvelope);
+}
+
+message RemotePreference {
+  string qualityPreset = 1; // smooth/balanced/clear
+  string maxResolution = 2; // optional, e.g. "1920x1080"
+}
+
+message CreateRemoteSessionRequest {
+  string requestId = 1;
+  string fromId = 2;
+  string toPeerId = 3;
+  string mode = 4; // viewOnly/control
+  RemotePreference preferred = 5;
+}
+
+message CreateRemoteSessionResponse {
+  bool accepted = 1;
+  string sessionId = 2;
+  string reason = 3;
+}
+
+message RemoteOfferRequest {
+  string sessionId = 1;
+  string fromId = 2;
+  string sdpOffer = 3;
+  string iceUfrag = 4;
+}
+
+message RemoteOfferResponse {
+  bool accepted = 1;
+  string sdpAnswer = 2;
+  string reason = 3;
+}
+
+message IceCandidate {
+  string sessionId = 1;
+  string fromId = 2;
+  string candidate = 3;
+  string sdpMid = 4;
+  int32 sdpMLineIndex = 5;
+}
+
+message RemoteInputEvent {
+  string sessionId = 1;
+  int64 seq = 2;
+  int64 tsMs = 3;
+  string type = 4;   // mouseMove/mouseDown/mouseUp/wheel/keyDown/keyUp/text
+  bytes payload = 5; // v1: opaque bytes
+}
+
+message RemoteInputAck {
+  int64 seq = 1;
+  bool accepted = 2;
+  string reason = 3;
+}
+
+message SubscribeRemoteStatsRequest {
+  string sessionId = 1;
+  string fromId = 2;
+  int32 intervalMs = 3;
+}
+
+message RemoteStatsEnvelope {
+  int64 tsMs = 1;
+  int32 rttMs = 2;
+  float fps = 3;
+  float bitrateMbps = 4;
+  float packetLoss = 5;
+  string resolution = 6;
+}
+

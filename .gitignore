@@ -1,0 +1,57 @@
+## Build outputs (.NET)
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+*.app/
+
+## NuGet / restore (packages come from nuget.org via csproj, not committed)
+*.nupkg
+**/packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## IDE / OS
+.vs/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.rsuser
+*.sln.docstates
+_ReSharper*/
+*.DotSettings.user
+.DS_Store
+Thumbs.db
+
+## Test
+TestResults/
+*.trx
+coverage*.json
+coverage*.xml
+
+## Local caches accidentally created inside repo (do not commit)
+.dotnet_home/
+.dotnet_home*/
+.nuget_packages/
+
+## User secrets / machine-only config (if you add them later)
+**/appsettings.*.local.json
+secrets.json
+*.pfx
+
+## Avalonia / generated (protobuf outputs live under obj/, already ignored)
+
+## Local scratch / installers (GitHub 100MB limit; not part of the app)
+XTransferTool/a_dir/
+*.pkg

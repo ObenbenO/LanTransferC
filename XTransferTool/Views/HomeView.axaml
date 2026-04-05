@@ -1,0 +1,168 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:XTransferTool.ViewModels"
+             xmlns:input="using:Avalonia.Input"
+             mc:Ignorable="d"
+             x:Class="XTransferTool.Views.HomeView"
+             x:DataType="vm:HomeViewModel">
+
+  <Grid ColumnDefinitions="380,*" RowDefinitions="Auto,*" Margin="2">
+    <!-- Header -->
+    <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
+      <TextBlock Text="主页" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+        <TextBlock Text="拖拽文件到左侧用户/标签即可发送（演示 UI）" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+      </Border>
+      <Button Content="发送演示留言" Command="{Binding SendDemoMessageCommand}" Height="34" CornerRadius="10"/>
+      <Button Content="创建演示传输" Command="{Binding CreateDemoTransferCommand}" Height="34" CornerRadius="10"/>
+      <Button Content="演示上传Chunks" Command="{Binding UploadDemoChunksCommand}" Height="34" CornerRadius="10"/>
+    </StackPanel>
+
+    <!-- Left: user tree -->
+    <Border Grid.Row="1"
+            Margin="0,0,14,0"
+            CornerRadius="16"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource PanelBorderBrush}"
+            BorderThickness="1"
+            Padding="14">
+      <Grid RowDefinitions="Auto,Auto,*" >
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="其它用户" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+          <TextBlock Text="{Binding VisiblePeerCount, StringFormat=（{0}）}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,10,0,12" ColumnDefinitions="*,Auto" >
+          <TextBox Watermark="搜索昵称/标签" Height="34" CornerRadius="10" Text="{Binding SearchQuery}"/>
+          <Button Grid.Column="1" Content="刷新" Command="{Binding RefreshDiscoveryCommand}" Margin="10,0,0,0" Height="34" CornerRadius="10"/>
+        </Grid>
+
+        <TreeView Grid.Row="2"
+                  ItemsSource="{Binding Users}"
+                  SelectedItem="{Binding SelectedNode}">
+          <TreeView.Styles>
+            <!-- Keep expansion state in the item ViewModel so refresh doesn't collapse the tree -->
+            <Style Selector="TreeViewItem" x:DataType="vm:UserTreeNode">
+              <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+              <!-- Make the clickable row feel larger -->
+              <Setter Property="MinHeight" Value="34"/>
+              <Setter Property="Padding" Value="6,2"/>
+            </Style>
+          </TreeView.Styles>
+          <TreeView.ItemTemplate>
+            <TreeDataTemplate ItemsSource="{Binding Children}">
+              <!-- Transparent background ensures the whole row receives pointer events -->
+              <Border Background="Transparent"
+                      Padding="2,4"
+                      PointerPressed="NodeHeader_PointerPressed">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Border Width="8" Height="8" CornerRadius="999"
+                          Background="{Binding Kind, Converter={x:Static vm:NodeKindToBrushConverter.Instance}}"
+                          VerticalAlignment="Center"/>
+                  <TextBlock Text="{Binding Name}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
+                  <TextBlock Text="{Binding Status}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                </StackPanel>
+              </Border>
+            </TreeDataTemplate>
+          </TreeView.ItemTemplate>
+        </TreeView>
+      </Grid>
+    </Border>
+
+    <!-- Right: drop zone + queues -->
+    <Grid Grid.Column="1" Grid.Row="1" RowDefinitions="Auto,*,Auto" >
+      <Border CornerRadius="18"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource PanelBorderBrush}"
+              BorderThickness="1"
+              Padding="18">
+        <Grid RowDefinitions="Auto,Auto,Auto" >
+          <TextBlock Text="投递面板" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+          <TextBlock Grid.Row="0"
+                     Margin="110,2,0,0"
+                     Text="{Binding SelectedTargetHint}"
+                     FontSize="12"
+                     Foreground="{DynamicResource SubtleTextBrush}"
+                     VerticalAlignment="Center"/>
+          <Grid Grid.Row="1"
+                Margin="0,12,0,0"
+                input:DragDrop.AllowDrop="True"
+                input:DragDrop.DragOver="DropZone_DragOver"
+                input:DragDrop.Drop="DropZone_Drop"
+                PointerPressed="DropZone_PointerPressed">
+            <Border CornerRadius="16"
+                    Background="{DynamicResource MainPanelBackgroundBrush}"
+                    BorderBrush="{DynamicResource AccentBrush}"
+                    BorderThickness="1"
+                    Padding="22">
+              <StackPanel Spacing="10" HorizontalAlignment="Center">
+                <TextBlock Text="DROP ZONE" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding DropHint}"
+                           FontSize="12"
+                           Foreground="{DynamicResource SubtleTextBrush}"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           Width="360"/>
+                <ItemsControl ItemsSource="{Binding DropFiles}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding}" FontSize="11" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Width="520"/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <StackPanel Grid.Row="2" Margin="0,14,0,0" Spacing="8">
+            <TextBlock Text="最近投递" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+            <ItemsControl ItemsSource="{Binding RecentSends}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TransferItem">
+                  <Border CornerRadius="12" Padding="12,10" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" Margin="0,0,0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding FileName}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
+                        <TextBlock Text="{Binding Target}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="1" Text="{Binding State}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12" VerticalAlignment="Center"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2" Margin="0,14,0,0" CornerRadius="16"
+              Background="{DynamicResource CardBackgroundBrush}"
+              BorderBrush="{DynamicResource PanelBorderBrush}"
+              BorderThickness="1"
+              Padding="14">
+        <StackPanel Spacing="10">
+          <TextBlock Text="当前队列" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+          <ItemsControl ItemsSource="{Binding TransferQueue}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:TransferItem">
+                <Border CornerRadius="12" Padding="12,10" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" Margin="0,0,0,10">
+                  <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding FileName}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
+                      <TextBlock Grid.Column="1" Text="{Binding State}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                    </Grid>
+                    <TextBlock Text="{Binding Target}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                    <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="1" Height="8" CornerRadius="999"/>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>
+

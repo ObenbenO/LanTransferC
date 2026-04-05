@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="XTransferTool.Tests/XTransferTool.Tests.csproj" />
+  <Project Path="XTransferTool/XTransferTool.csproj" />
+</Solution>

@@ -1,0 +1,81 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:XTransferTool.ViewModels"
+             mc:Ignorable="d"
+             x:Class="XTransferTool.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+  <Grid RowDefinitions="Auto,*" Margin="2">
+    <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
+      <TextBlock Text="设置" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+        <TextBlock Text="{Binding ConfigPath}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+      </Border>
+      <Button Content="立即保存" Command="{Binding SaveNowCommand}" Height="34" CornerRadius="10"/>
+      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
+              IsVisible="{Binding SaveFeedback, Converter={x:Static vm:StringNotEmptyConverter.Instance}}">
+        <TextBlock Text="{Binding SaveFeedback}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+      </Border>
+    </StackPanel>
+
+    <Border Grid.Row="1"
+            CornerRadius="16"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource PanelBorderBrush}"
+            BorderThickness="1"
+            Padding="16">
+      <ScrollViewer>
+        <StackPanel Spacing="16" MaxWidth="720">
+          <Border CornerRadius="16" Padding="14" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+            <StackPanel Spacing="10">
+              <TextBlock Text="个人信息" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+              <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                <TextBlock Text="昵称" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1" Text="{Binding Nickname}" Height="34" CornerRadius="10"/>
+
+                <TextBlock Grid.Row="1" Text="标签（逗号分隔）" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Tags}" Height="34" CornerRadius="10"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <Border CornerRadius="16" Padding="14" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+            <StackPanel Spacing="10">
+              <TextBlock Text="接收" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+              <Grid ColumnDefinitions="140,*,Auto" ColumnSpacing="12">
+                <TextBlock Text="默认接收目录" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1" Text="{Binding DownloadFolder}" Height="34" CornerRadius="10"/>
+                <Button Grid.Column="2" Content="选择…" Command="{Binding BrowseFolderCommand}" Height="34" CornerRadius="10"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <Border CornerRadius="16" Padding="14" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+            <StackPanel Spacing="10">
+              <TextBlock Text="网络与发现" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+              <CheckBox Content="允许局域网发现" IsChecked="{Binding EnableDiscovery}" Foreground="{DynamicResource PrimaryTextBrush}"/>
+              <CheckBox Content="允许远程桌面控制（被控）" IsChecked="{Binding AllowRemoteControl}" Foreground="{DynamicResource PrimaryTextBrush}"/>
+            </StackPanel>
+          </Border>
+
+          <Border CornerRadius="16" Padding="14" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+            <StackPanel Spacing="10">
+              <TextBlock Text="外观" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+              <Grid ColumnDefinitions="140,*" ColumnSpacing="12">
+                <TextBlock Text="主题" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="1" SelectedItem="{Binding Theme}" Height="34" CornerRadius="10">
+                  <x:String>Dark</x:String>
+                  <x:String>Light</x:String>
+                  <x:String>Default</x:String>
+                </ComboBox>
+              </Grid>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+  </Grid>
+</UserControl>
+

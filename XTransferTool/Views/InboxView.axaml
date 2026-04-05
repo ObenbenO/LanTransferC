@@ -1,0 +1,80 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:XTransferTool.ViewModels"
+             mc:Ignorable="d"
+             x:Class="XTransferTool.Views.InboxView"
+             x:DataType="vm:InboxViewModel">
+
+  <Grid RowDefinitions="Auto,*" Margin="2">
+    <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
+      <TextBlock Text="收件箱" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+      <ComboBox Width="120"
+                Height="34"
+                CornerRadius="10"
+                SelectedItem="{Binding StatusFilter}">
+        <x:String>all</x:String>
+        <x:String>unread</x:String>
+        <x:String>read</x:String>
+      </ComboBox>
+      <TextBox Watermark="搜索文件名 / 发送者 / 留言"
+               Width="320"
+               Height="34"
+               CornerRadius="10"
+               Text="{Binding Search}"/>
+      <Button Content="刷新" Command="{Binding RefreshCommand}" Height="34" CornerRadius="10"/>
+      <Button Content="标记已读" Command="{Binding MarkSelectedReadCommand}" Height="34" CornerRadius="10"/>
+    </StackPanel>
+
+    <Border Grid.Row="1"
+            CornerRadius="16"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource PanelBorderBrush}"
+            BorderThickness="1"
+            Padding="14">
+      <DataGrid x:CompileBindings="False"
+                ItemsSource="{Binding Items}"
+                AutoGenerateColumns="False"
+                IsReadOnly="True"
+                Foreground="{DynamicResource PrimaryTextBrush}"
+                GridLinesVisibility="None"
+                CanUserResizeColumns="True"
+                HeadersVisibility="Column"
+                RowHeight="44"
+                MinHeight="120"
+                SelectedItem="{Binding SelectedItem}">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="180"/>
+          <DataGridTextColumn Header="发送者" Binding="{Binding From}" Width="260"/>
+          <DataGridTemplateColumn Header="文件名" Width="*">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="vm:InboxItem">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" Margin="0,2">
+                  <Border Width="28" Height="28" CornerRadius="8"
+                          Background="{DynamicResource MainPanelBackgroundBrush}"
+                          BorderBrush="{DynamicResource PanelBorderBrush}"
+                          BorderThickness="1">
+                    <Viewbox Margin="5" Stretch="Uniform">
+                      <Path Data="{Binding FileTypeIconGeometry}"
+                            Fill="{Binding FileTypeIconBrush}"
+                            Stretch="Uniform"
+                            Opacity="0.95"/>
+                    </Viewbox>
+                  </Border>
+                  <TextBlock Text="{Binding FileName}"
+                             VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis"
+                             Foreground="{DynamicResource PrimaryTextBrush}"/>
+                </StackPanel>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+          <DataGridTextColumn Header="留言" Binding="{Binding Message}" Width="2*"/>
+          <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="120"/>
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+  </Grid>
+</UserControl>
+

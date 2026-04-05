@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:XTransferTool.ViewModels"
+             mc:Ignorable="d"
+             x:Class="XTransferTool.Views.RemoteDesktopView"
+             x:DataType="vm:RemoteDesktopViewModel">
+
+  <Grid ColumnDefinitions="340,*" RowDefinitions="Auto,*" Margin="2">
+    <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
+      <TextBlock Text="远程桌面" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+        <TextBlock Text="HUD：延迟 / 帧率 / 码率（演示 UI）" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
+      </Border>
+    </StackPanel>
+
+    <!-- Left device list -->
+    <Border Grid.Row="1"
+            Margin="0,0,14,0"
+            CornerRadius="16"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource PanelBorderBrush}"
+            BorderThickness="1"
+            Padding="14">
+      <StackPanel Spacing="10">
+        <TextBlock Text="可控设备" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+        <ListBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" Background="Transparent" BorderThickness="0">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="12" Padding="12,10" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" Margin="0,0,0,10">
+                <TextBlock Text="{Binding .}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </StackPanel>
+    </Border>
+
+    <!-- Right canvas -->
+    <Border Grid.Column="1" Grid.Row="1"
+            CornerRadius="16"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource PanelBorderBrush}"
+            BorderThickness="1">
+      <Grid>
+        <Border Margin="14"
+                CornerRadius="14"
+                Background="{DynamicResource MainPanelBackgroundBrush}"
+                BorderBrush="{DynamicResource AccentBrush}"
+                BorderThickness="1">
+          <Grid>
+            <TextBlock Text="REMOTE CANVAS"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource AccentBrush}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
+
+            <!-- Control bar (fake) -->
+            <Border HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,14,0,0"
+                    CornerRadius="999"
+                    Padding="14,10"
+                    Background="{DynamicResource CardBackgroundBrush}"
+                    BorderBrush="{DynamicResource PanelBorderBrush}"
+                    BorderThickness="1">
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Content="连接" Command="{Binding ConnectCommand}" CornerRadius="10" Padding="12,6"/>
+                <Button Content="断开" Command="{Binding DisconnectCommand}" CornerRadius="10" Padding="12,6"/>
+                <Button Content="发送输入(演示)" Command="{Binding SendDemoInputCommand}" CornerRadius="10" Padding="12,6"/>
+                <ComboBox SelectedIndex="0" Width="110" Height="32">
+                  <ComboBoxItem Content="流畅"/>
+                  <ComboBoxItem Content="平衡"/>
+                  <ComboBoxItem Content="清晰"/>
+                </ComboBox>
+                <ComboBox SelectedIndex="0" Width="120" Height="32">
+                  <ComboBoxItem Content="原始分辨率"/>
+                  <ComboBoxItem Content="1080p"/>
+                  <ComboBoxItem Content="720p"/>
+                </ComboBox>
+              </StackPanel>
+            </Border>
+
+            <!-- HUD -->
+            <Border HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,14,14"
+                    CornerRadius="14"
+                    Padding="12,10"
+                    Background="{DynamicResource CardBackgroundBrush}"
+                    BorderBrush="{DynamicResource PanelBorderBrush}"
+                    BorderThickness="1">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding SelectedDevice}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                <TextBlock Text="{Binding Latency, StringFormat=延迟：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
+                <TextBlock Text="{Binding Fps, StringFormat=帧率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
+                <TextBlock Text="{Binding Bitrate, StringFormat=码率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Border>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+
