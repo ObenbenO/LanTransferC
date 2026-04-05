@@ -233,8 +233,12 @@ public sealed class FileTransferServiceImpl : FileTransferService.FileTransferSe
             var fileName = record.ItemIdToFileName.TryGetValue(item.ItemId, out var n) ? n : (item.ItemId + ".bin");
             fileName = SanitizeFileName(fileName);
 
+            if (_uploadStates.TryGet(request.TransferId, item.ItemId, out var state))
+                state.Dispose();
+
             var finalPath = TryMoveToReceiveFolder(path, fileName);
             receipt.SavedPath = finalPath;
+            _uploadStates.Remove(request.TransferId, item.ItemId);
 
             // Write inbox record (V1: one record per completed item)
             Console.WriteLine($"[transfer] complete add inbox file={fileName} path={finalPath} msgLen={(record.Message ?? "").Length}");

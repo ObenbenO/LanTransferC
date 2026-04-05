@@ -5,6 +5,25 @@ namespace XTransferTool.Tests;
 
 public class UnitTest1
 {
+    private static string DecodeIfNeeded(string value)
+    {
+        const string prefix = "u8b64:";
+        if (string.IsNullOrWhiteSpace(value))
+            return value;
+        if (!value.StartsWith(prefix, StringComparison.Ordinal))
+            return value;
+
+        try
+        {
+            var bytes = Convert.FromBase64String(value.Substring(prefix.Length));
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
     [Fact]
     public void MdnsTxtBuilder_TruncatesTagsToTwoWhenOversize()
     {
@@ -30,7 +49,8 @@ public class UnitTest1
         Assert.True(txt.ContainsKey("nickname"));
         Assert.True(txt.ContainsKey("tags"));
 
-        var tags = txt["tags"].Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var tagsRaw = DecodeIfNeeded(txt["tags"]);
+        var tags = tagsRaw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Assert.Contains("会场1", tags);
         Assert.Contains("A片区", tags);
         Assert.True(tags.Length <= 8);
