@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace XTransferTool.Inbox;
 
@@ -17,7 +18,7 @@ public sealed class InMemoryInboxRepository : IInboxRepository
     {
         lock (_gate)
             _items.Add(record);
-        Console.WriteLine($"[inbox] add id={record.InboxId} file={record.FileName} status={record.Status} total={_items.Count}");
+        Log.Information("[inbox] add id={InboxId} file={FileName} status={Status} total={Total}", record.InboxId, record.FileName, record.Status, _items.Count);
         Changed?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
@@ -49,7 +50,7 @@ public sealed class InMemoryInboxRepository : IInboxRepository
             .Take(Math.Clamp(request.Limit, 1, 200));
 
         var list = q.ToList();
-        Console.WriteLine($"[inbox] query status={request.Status} search={(request.Search ?? "").Trim()} -> {list.Count} items (total={_items.Count})");
+        Log.Information("[inbox] query status={Status} search={Search} -> {Count} items (total={Total})", request.Status, (request.Search ?? "").Trim(), list.Count, _items.Count);
         return Task.FromResult(new QueryInboxResponse(list, Total: null));
     }
 

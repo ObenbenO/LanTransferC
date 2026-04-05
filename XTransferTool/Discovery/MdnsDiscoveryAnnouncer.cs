@@ -4,6 +4,7 @@ using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using Makaretu.Dns;
+using Serilog;
 
 namespace XTransferTool.Discovery;
 
@@ -84,10 +85,13 @@ public sealed class MdnsDiscoveryAnnouncer : IDiscoveryAnnouncer
     {
         var host = Dns.GetHostName();
         var ipv4 = DiscoveryDiagnostics.FormatLocalUnicastIPv4ForLog();
-        Console.WriteLine(
-            $"[discovery] announce mDNS instance=\"{identity.InstanceName()}\" id={identity.Id} controlPort={controlPort} " +
-            $"dnsHostname={host} localUnicastIPv4=[{ipv4}] " +
-            $"(peers map SRV target hostname -> A/AAAA; compare with what the receiver logs as [discovery] resolved)");
+        Log.Information(
+            "[discovery] announce mDNS instance=\"{Instance}\" id={Id} controlPort={ControlPort} dnsHostname={Host} localUnicastIPv4=[{Ipv4}] (peers map SRV target hostname -> A/AAAA; compare with what the receiver logs as [discovery] resolved)",
+            identity.InstanceName(),
+            identity.Id,
+            controlPort,
+            host,
+            ipv4);
     }
 
     private ServiceProfile BuildProfile(DeviceIdentity identity, int controlPort)

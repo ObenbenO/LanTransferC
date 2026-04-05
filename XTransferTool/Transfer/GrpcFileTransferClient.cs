@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Grpc.Net.Client;
+using Serilog;
 using XTransferTool.Control.Proto;
 
 namespace XTransferTool.Transfer;
@@ -10,7 +11,7 @@ namespace XTransferTool.Transfer;
 public sealed class GrpcFileTransferClient
 {
     private static void LogEndpoint(string op, string address, int port) =>
-        Console.WriteLine($"[grpc-transfer] {op} -> http://{address}:{port}");
+        Log.Information("[grpc-transfer] {Op} -> http://{Address}:{Port}", op, address, port);
 
     public async Task<CreateTransferResponse> CreateTransferAsync(string address, int port, CreateTransferRequest request, CancellationToken ct = default)
     {

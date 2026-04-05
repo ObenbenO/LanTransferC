@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
+using Serilog;
 using XTransferTool.Control.Proto;
 using XTransferTool.Config;
 using XTransferTool.Inbox;
@@ -241,7 +242,7 @@ public sealed class FileTransferServiceImpl : FileTransferService.FileTransferSe
             _uploadStates.Remove(request.TransferId, item.ItemId);
 
             // Write inbox record (V1: one record per completed item)
-            Console.WriteLine($"[transfer] complete add inbox file={fileName} path={finalPath} msgLen={(record.Message ?? "").Length}");
+            Log.Information("[transfer] complete add inbox file={FileName} path={Path} msgLen={MsgLen}", fileName, finalPath, (record.Message ?? "").Length);
             await _inbox.AddRecordAsync(new InboxItemRecord(
                 InboxId: Guid.NewGuid().ToString(),
                 ReceivedAtMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),

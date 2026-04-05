@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Serilog;
 using XTransferTool.Config;
 
 namespace XTransferTool.Control;
@@ -43,7 +44,7 @@ public sealed class ControlServerHost : IAsyncDisposable
         {
             _host = BuildHost(_port);
             await _host.StartAsync(ct);
-            Console.WriteLine($"[control] gRPC listening on *:{_port} (HTTP/2); discovery should advertise this port");
+            Log.Information("[control] gRPC listening on *:{Port} (HTTP/2); discovery should advertise this port", _port);
             return;
         }
         catch (OperationCanceledException)
@@ -73,12 +74,13 @@ public sealed class ControlServerHost : IAsyncDisposable
         _port = GetFreeTcpPort();
         _host = BuildHost(_port);
         await _host.StartAsync(ct);
-        Console.WriteLine($"[control] gRPC listening on *:{_port} (ephemeral fallback; update firewall & peer expectations)");
+        Log.Information("[control] gRPC listening on *:{Port} (ephemeral fallback; update firewall & peer expectations)", _port);
     }
 
     private IHost BuildHost(int port)
     {
         _host = Host.CreateDefaultBuilder()
+            .UseSerilog()
             .ConfigureWebHostDefaults(webBuilder =>
             {
                 webBuilder.ConfigureKestrel(kestrel =>
@@ -89,6 +91,7 @@ public sealed class ControlServerHost : IAsyncDisposable
                 webBuilder.ConfigureServices(services =>
                 {
                     services.AddGrpc();
+                    services.AddLogging(b => b.AddSerilog(dispose: false));
                     services.AddSingleton<InMemoryEventBus>();
                     services.AddSingleton<XTransferTool.Transfer.TransferStore>();
                     services.AddSingleton<XTransferTool.Transfer.UploadStateStore>();

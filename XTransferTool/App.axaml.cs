@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using Serilog;
 using XTransferTool.ViewModels;
 using XTransferTool.Views;
 
@@ -46,7 +47,7 @@ public partial class App : Application
         }
         catch (System.Exception ex)
         {
-            System.Console.WriteLine($"[app] AppServices.StartAsync failed: {ex}");
+            Log.Error(ex, "AppServices.StartAsync failed");
         }
 
         Dispatcher.UIThread.Post(() =>

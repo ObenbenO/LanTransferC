@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Makaretu.Dns;
+using Serilog;
 
 namespace XTransferTool.Discovery;
 
@@ -44,7 +45,7 @@ public sealed class MdnsPeerResolver : IPeerResolver
         {
             // Debug aid: makes it obvious whether we are receiving only PTR,
             // or receiving SRV/TXT but names don't match.
-            Console.WriteLine($"[discovery] resolve-miss instance={instanceFqdn} srv={(srv is null ? 0 : 1)} txt={(txt is null ? 0 : 1)} ans={msg.Answers.Count} add={msg.AdditionalRecords.Count}");
+            Log.Information("[discovery] resolve-miss instance={Instance} srv={HasSrv} txt={HasTxt} ans={Ans} add={Add}", instanceFqdn, srv is null ? 0 : 1, txt is null ? 0 : 1, msg.Answers.Count, msg.AdditionalRecords.Count);
             return Task.FromResult<ResolvedPeer?>(null);
         }
 
@@ -95,10 +96,14 @@ public sealed class MdnsPeerResolver : IPeerResolver
         var addresses = SortAddresses(ips).Select(a => a.ToString()).ToArray();
 
         var idShort = id.Length >= 8 ? id[..8] : id;
-        Console.WriteLine(
-            $"[discovery] resolved peer id={idShort}... nick={nickname ?? "?"} os={os} controlPort={controlPort} " +
-            $"srvTarget={host} addresses=[{string.Join(", ", addresses)}] " +
-            $"(gRPC uses first; order: same-subnet-as-this-machine > RFC1918 > other IPv4 > 169.254 > IPv6)");
+        Log.Information(
+            "[discovery] resolved peer id={IdShort}... nick={Nick} os={Os} controlPort={ControlPort} srvTarget={SrvTarget} addresses=[{Addresses}] (gRPC uses first; order: same-subnet-as-this-machine > RFC1918 > other IPv4 > 169.254 > IPv6)",
+            idShort,
+            nickname ?? "?",
+            os,
+            controlPort,
+            host,
+            string.Join(", ", addresses));
 
         return Task.FromResult<ResolvedPeer?>(new ResolvedPeer(
             Id: id,
