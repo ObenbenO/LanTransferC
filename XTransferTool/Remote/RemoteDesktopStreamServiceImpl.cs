@@ -262,9 +262,17 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
                 CreateNoWindow = true
             };
 
-            var proc = Process.Start(psi);
+            Process? proc;
+            try
+            {
+                proc = Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"ffmpeg 启动失败：{ex.Message}"));
+            }
             if (proc is null)
-                throw new InvalidOperationException("Failed to start ffmpeg");
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "ffmpeg 启动失败"));
 
             _ = DrainErrorAsync(proc);
             return new FfmpegHevcEncoder(proc);

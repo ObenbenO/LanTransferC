@@ -96,6 +96,7 @@
                     BorderThickness="1">
               <StackPanel Spacing="6">
                 <TextBlock Text="{Binding SelectedDevice.Display}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                <TextBlock Text="{Binding Status}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Latency, StringFormat=延迟：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Fps, StringFormat=帧率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Bitrate, StringFormat=码率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>

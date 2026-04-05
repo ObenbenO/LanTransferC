@@ -58,6 +58,7 @@ public static class AppServices
     public static IPeerDirectory? PeerDirectory => _discovery?.Directory;
     public static IInboxRepository? InboxRepository => _inbox;
     public static SettingsStore? Settings => _settings;
+    public static int? ControlPort => _controlHost?.Port;
 
     public static void RefreshDiscovery()
     {

@@ -25,6 +25,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private readonly IPeerDirectory? _directory;
     private readonly SettingsStore? _settings;
+    private readonly int? _localControlPort;
 
     public ObservableCollection<RemoteDeviceItem> Devices { get; } = [];
 
@@ -39,6 +40,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     [ObservableProperty]
     private string _bitrate = "18 Mbps";
+
+    [ObservableProperty]
+    private string _status = "未连接";
 
     [ObservableProperty]
     private WriteableBitmap? _frame;
@@ -58,10 +62,11 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private Stream? _decoderOut;
     private string? _sessionId;
 
-    public RemoteDesktopViewModel(IPeerDirectory? directory = null, SettingsStore? settings = null)
+    public RemoteDesktopViewModel(IPeerDirectory? directory = null, SettingsStore? settings = null, int? localControlPort = null)
     {
         _directory = directory;
         _settings = settings;
+        _localControlPort = localControlPort;
         if (_directory is not null)
         {
             _directory.Changed += OnDirectoryChanged;
@@ -72,72 +77,90 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     [RelayCommand]
     private async Task Connect()
     {
-        await Disconnect();
-
-        _statsCts = new CancellationTokenSource();
-        _streamCts = new CancellationTokenSource();
-
-        var peer = SelectedDevice?.Peer;
-        if (peer is null)
-            return;
-
-        var address = peer.Addresses?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a)) ?? "";
-        if (string.IsNullOrWhiteSpace(address))
-            return;
-
-        var localId = _settings?.Current.Identity.DeviceId;
-        if (string.IsNullOrWhiteSpace(localId))
-            localId = "local";
-
-        var channel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
-        var control = new RemoteControlService.RemoteControlServiceClient(channel);
-        var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(channel);
-
-        var create = await control.CreateSessionAsync(new CreateRemoteSessionRequest
+        try
         {
-            RequestId = Guid.NewGuid().ToString(),
-            FromId = localId,
-            ToPeerId = peer.Id,
-            Mode = "control",
-            Preferred = new RemotePreference { QualityPreset = "smooth", MaxResolution = "1920x1080" }
-        }, cancellationToken: _streamCts.Token);
-        _sessionId = create.SessionId;
+            await Disconnect();
 
-        _inputCall = control.InputStream(cancellationToken: _streamCts.Token);
-        _ = DrainAcksAsync(_inputCall, _streamCts.Token);
+            Status = "连接中…";
+            _statsCts = new CancellationTokenSource();
+            _streamCts = new CancellationTokenSource();
 
-        var stats = control.SubscribeStats(new SubscribeRemoteStatsRequest
-        {
-            SessionId = _sessionId,
-            FromId = localId,
-            IntervalMs = 500
-        }, cancellationToken: _statsCts.Token);
-
-        _ = Task.Run(async () =>
-        {
-            try
+            var peer = SelectedDevice?.Peer;
+            if (peer is null)
             {
-                while (await stats.ResponseStream.MoveNext(_statsCts.Token))
-                {
-                    var s = stats.ResponseStream.Current;
-                    Latency = $"{s.RttMs} ms";
-                    Fps = $"{s.Fps:0} fps";
-                    Bitrate = $"{s.BitrateMbps:0.#} Mbps";
-                }
+                Status = "请选择设备";
+                return;
             }
-            catch (OperationCanceledException) { }
-        }, _statsCts.Token);
 
-        var call = stream.SubscribeHevcStream(new SubscribeHevcStreamRequest
+            var address = peer.Addresses?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a)) ?? "";
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                Status = "设备地址为空";
+                return;
+            }
+
+            var localId = _settings?.Current.Identity.DeviceId;
+            if (string.IsNullOrWhiteSpace(localId))
+                localId = "local";
+
+            var channel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
+            var control = new RemoteControlService.RemoteControlServiceClient(channel);
+            var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(channel);
+
+            var create = await control.CreateSessionAsync(new CreateRemoteSessionRequest
+            {
+                RequestId = Guid.NewGuid().ToString(),
+                FromId = localId,
+                ToPeerId = peer.Id,
+                Mode = "control",
+                Preferred = new RemotePreference { QualityPreset = "smooth", MaxResolution = "1920x1080" }
+            }, cancellationToken: _streamCts.Token);
+            _sessionId = create.SessionId;
+
+            _inputCall = control.InputStream(cancellationToken: _streamCts.Token);
+            _ = DrainAcksAsync(_inputCall, _streamCts.Token);
+
+            var stats = control.SubscribeStats(new SubscribeRemoteStatsRequest
+            {
+                SessionId = _sessionId,
+                FromId = localId,
+                IntervalMs = 500
+            }, cancellationToken: _statsCts.Token);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await stats.ResponseStream.MoveNext(_statsCts.Token))
+                    {
+                        var s = stats.ResponseStream.Current;
+                        Latency = $"{s.RttMs} ms";
+                        Fps = $"{s.Fps:0} fps";
+                        Bitrate = $"{s.BitrateMbps:0.#} Mbps";
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }, _statsCts.Token);
+
+            var call = stream.SubscribeHevcStream(new SubscribeHevcStreamRequest
+            {
+                SessionId = _sessionId,
+                FromId = localId,
+                TargetFps = 30,
+                MaxResolution = "1920x1080",
+                QualityPreset = "smooth"
+            }, cancellationToken: _streamCts.Token);
+
+            _ = Task.Run(() => ConsumeHevcAsync(call, _streamCts.Token), _streamCts.Token);
+        }
+        catch (RpcException ex)
         {
-            SessionId = _sessionId,
-            FromId = localId,
-            TargetFps = 30,
-            MaxResolution = "1920x1080",
-            QualityPreset = "smooth"
-        }, cancellationToken: _streamCts.Token);
-
-        _ = Task.Run(() => ConsumeHevcAsync(call, _streamCts.Token), _streamCts.Token);
+            Status = $"{ex.StatusCode}: {ex.Status.Detail}";
+        }
+        catch (Exception ex)
+        {
+            Status = ex.Message;
+        }
     }
 
     [RelayCommand]
@@ -175,6 +198,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         Frame = null;
         RemoteWidth = 0;
         RemoteHeight = 0;
+        Status = "未连接";
     }
 
     [RelayCommand]
@@ -268,12 +292,17 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 {
                     RemoteWidth = chunk.Width;
                     RemoteHeight = chunk.Height;
-                    StartDecoder(RemoteWidth, RemoteHeight);
+                    if (!TryStartDecoder(RemoteWidth, RemoteHeight, out var err))
+                    {
+                        Status = err;
+                        return;
+                    }
                 }
 
                 var data = chunk.Data.ToByteArray();
                 bytesInWindow += data.Length;
                 await _decoderIn!.WriteAsync(data, 0, data.Length, ct);
+                Status = "已连接";
 
                 if (windowStart.ElapsedMilliseconds >= 1000)
                 {
@@ -287,8 +316,13 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         catch (OperationCanceledException)
         {
         }
+        catch (RpcException ex)
+        {
+            Status = $"{ex.StatusCode}: {ex.Status.Detail}";
+        }
         catch
         {
+            Status = "流已断开";
         }
         finally
         {
@@ -296,10 +330,11 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
     }
 
-    private void StartDecoder(int width, int height)
+    private bool TryStartDecoder(int width, int height, out string error)
     {
+        error = "";
         if (_decoder is not null)
-            return;
+            return true;
 
         var args =
             "-hide_banner -loglevel error " +
@@ -318,9 +353,20 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             CreateNoWindow = true
         };
 
-        _decoder = Process.Start(psi);
+        try
+        {
+            _decoder = Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            error = $"启动 ffmpeg 解码失败：{ex.Message}";
+            return false;
+        }
         if (_decoder is null)
-            throw new InvalidOperationException("Failed to start ffmpeg decoder");
+        {
+            error = "启动 ffmpeg 解码失败";
+            return false;
+        }
 
         _decoderIn = _decoder.StandardInput.BaseStream;
         _decoderOut = _decoder.StandardOutput.BaseStream;
@@ -336,9 +382,10 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
         var cts = _streamCts;
         if (cts is null)
-            return;
+            return true;
 
         _ = Task.Run(() => DecodeLoopAsync(fb, width, height, _decoderOut!, cts.Token), cts.Token);
+        return true;
     }
 
     private async Task DecodeLoopAsync(WriteableBitmap bitmap, int width, int height, Stream src, CancellationToken ct)
@@ -405,8 +452,34 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private void RebuildDevices()
     {
+        Devices.Clear();
+
+        var localId = _settings?.Current.Identity.DeviceId;
+        if (!string.IsNullOrWhiteSpace(localId))
+        {
+            var localPort = _localControlPort ?? _settings?.Current.Control.PreferredPort ?? 50051;
+            var os = OperatingSystem.IsWindows() ? "windows" : (OperatingSystem.IsMacOS() ? "macos" : "unknown");
+            var localPeer = new ResolvedPeer(
+                Id: localId,
+                Nickname: $"{_settings?.Current.Identity.Nickname ?? "本机"}（本机）",
+                Tags: _settings?.Current.Identity.Tags ?? Array.Empty<string>(),
+                Addresses: ["127.0.0.1"],
+                ControlPort: localPort,
+                Capabilities: ["remote"],
+                Os: os,
+                Ver: "0.1.0",
+                LastSeenAt: DateTimeOffset.UtcNow,
+                InstanceName: "local"
+            );
+            Devices.Add(new RemoteDeviceItem(localPeer.Nickname, localPeer));
+        }
+
         if (_directory is null)
+        {
+            if (SelectedDevice is null && Devices.Count > 0)
+                SelectedDevice = Devices[0];
             return;
+        }
 
         var peers = _directory.Snapshot()
             .Select(r => r.Peer)
@@ -414,7 +487,6 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             .OrderBy(p => p.Nickname, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Devices.Clear();
         foreach (var p in peers)
         {
             var tags = p.Tags.Length > 0 ? string.Join(" / ", p.Tags) : "";
