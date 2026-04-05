@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Makaretu.Dns;
+using Serilog;
 
 namespace XTransferTool.Discovery;
 
@@ -43,6 +44,7 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
         _sd.ServiceInstanceShutdown += OnShutdown;
         _sd.Mdns.AnswerReceived += OnAnswerReceived;
 
+        Log.Information("[discovery] browse start serviceType={ServiceType} mdnsIfacesIpv4=[{MdnsIf}]", _serviceType, DiscoveryDiagnostics.FormatMdnsBindInterfacesForLog());
         _sd.QueryServiceInstances(_serviceType);
         _timer = new PeriodicTimer(_periodicQuery);
         _loop = PeriodicQueryLoopAsync(_cts.Token);
@@ -53,6 +55,7 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
     public void Refresh()
     {
         // Best-effort: trigger a new query to speed up discovery.
+        Log.Information("[discovery] browse refresh query serviceType={ServiceType}", _serviceType);
         _sd?.QueryServiceInstances(_serviceType);
     }
 
@@ -81,6 +84,7 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
     private void OnDiscovered(object? sender, ServiceInstanceDiscoveryEventArgs e)
     {
         var instance = e.ServiceInstanceName.ToString().TrimEnd('.');
+        Log.Information("[discovery] instance discovered instance={Instance}", instance);
         if (_seenInstances.Add(instance))
         {
             // Actively resolve SRV/TXT for the instance. Some responders send only the PTR
@@ -105,6 +109,7 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
 
     private void OnShutdown(object? sender, ServiceInstanceShutdownEventArgs e)
     {
+        Log.Information("[discovery] instance shutdown instance={Instance}", e.ServiceInstanceName.ToString().TrimEnd('.'));
         _events?.Writer.TryWrite(new DiscoveredPeerEvent(
             DiscoveredPeerEventType.PeerRemoved,
             e.ServiceInstanceName.ToString().TrimEnd('.'),
@@ -126,6 +131,8 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
         var hasTxt = records.OfType<TXTRecord>().Any();
         if (!hasSrv && !hasTxt)
             return;
+
+        Log.Information("[discovery] answer received hasSrv={HasSrv} hasTxt={HasTxt} ans={Ans} add={Add}", hasSrv ? 1 : 0, hasTxt ? 1 : 0, msg.Answers.Count, msg.AdditionalRecords.Count);
 
         var instance = records
             .OfType<SRVRecord>()

@@ -155,6 +155,22 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             }, cancellationToken: _streamCts.Token);
 
             _ = Task.Run(() => ConsumeHevcAsync(call, _streamCts.Token), _streamCts.Token);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(5000, _streamCts.Token);
+                }
+                catch
+                {
+                    return;
+                }
+
+                if (_streamCts.IsCancellationRequested)
+                    return;
+                if (RemoteWidth <= 0 || RemoteHeight <= 0)
+                    Status = "连接超时：未收到视频流";
+            }, _streamCts.Token);
         }
         catch (RpcException ex)
         {
@@ -282,6 +298,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     {
         long bytesInWindow = 0;
         var windowStart = Stopwatch.StartNew();
+        var gotAny = false;
 
         try
         {
@@ -291,6 +308,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 if (chunk is null)
                     continue;
 
+                gotAny = true;
                 if (RemoteWidth <= 0 || RemoteHeight <= 0)
                 {
                     RemoteWidth = chunk.Width;
@@ -322,6 +340,14 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                     bytesInWindow = 0;
                     windowStart.Restart();
                 }
+            }
+
+            if (!ct.IsCancellationRequested)
+            {
+                if (!gotAny)
+                    Status = "连接失败：未收到视频流";
+                else if (Status == "已连接")
+                    Status = "连接已断开";
             }
         }
         catch (OperationCanceledException)
@@ -355,7 +381,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
         var psi = new ProcessStartInfo
         {
-            FileName = "ffmpeg",
+            FileName = XTransferTool.Remote.FfmpegLocator.ResolveFfmpegPath(),
             Arguments = args,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,

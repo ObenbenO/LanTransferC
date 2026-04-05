@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
+using Serilog;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -26,46 +27,70 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
 
     public override async Task SubscribeHevcStream(SubscribeHevcStreamRequest request, IServerStreamWriter<HevcStreamChunk> responseStream, ServerCallContext context)
     {
-        if (_settings is not null && !_settings.Current.Remote.AllowRemoteControl)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "remote control disabled"));
-
-        var targetFps = request.TargetFps <= 0 ? 30 : Math.Clamp(request.TargetFps, 1, 60);
-        using var capturer = DesktopCapturer.Create();
-
-        var width = capturer.Width;
-        var height = capturer.Height;
-
-        using var encoder = FfmpegHevcEncoder.Start(width, height, targetFps, request.QualityPreset ?? "");
-
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
-        var captureTask = Task.Run(() => CapturePumpAsync(capturer, encoder, targetFps, linkedCts.Token), linkedCts.Token);
-
-        var seq = 0L;
-        var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
         try
         {
-            while (true)
-            {
-                var n = await encoder.Stdout.ReadAsync(buf, 0, buf.Length, context.CancellationToken);
-                if (n <= 0)
-                    break;
+            if (_settings is not null && !_settings.Current.Remote.AllowRemoteControl)
+                throw new RpcException(new Status(StatusCode.PermissionDenied, "remote control disabled"));
 
-                await responseStream.WriteAsync(new HevcStreamChunk
+            var targetFps = request.TargetFps <= 0 ? 30 : Math.Clamp(request.TargetFps, 1, 60);
+            using var capturer = DesktopCapturer.Create();
+
+            var width = capturer.Width;
+            var height = capturer.Height;
+
+            using var encoder = FfmpegHevcEncoder.Start(width, height, targetFps, request.QualityPreset ?? "");
+
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+            var captureTask = Task.Run(() => CapturePumpAsync(capturer, encoder, targetFps, linkedCts.Token), linkedCts.Token);
+
+            var seq = 0L;
+            var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                while (true)
                 {
-                    Seq = Interlocked.Increment(ref seq),
-                    TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Data = ByteString.CopyFrom(buf, 0, n),
-                    Width = width,
-                    Height = height,
-                    Codec = "hevc"
-                }, context.CancellationToken);
+                    var n = await encoder.Stdout.ReadAsync(buf, 0, buf.Length, context.CancellationToken);
+                    if (n <= 0)
+                        break;
+
+                    await responseStream.WriteAsync(new HevcStreamChunk
+                    {
+                        Seq = Interlocked.Increment(ref seq),
+                        TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Data = ByteString.CopyFrom(buf, 0, n),
+                        Width = width,
+                        Height = height,
+                        Codec = "hevc"
+                    }, context.CancellationToken);
+                }
+
+                if (seq == 0 && !context.CancellationToken.IsCancellationRequested)
+                {
+                    var err = await encoder.ReadStderrAsync();
+                    var detail = string.IsNullOrWhiteSpace(err) ? "encoder produced no output" : err;
+                    if (detail.Length > 1200)
+                        detail = detail.Substring(0, 1200);
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, detail));
+                }
             }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buf);
+                linkedCts.Cancel();
+                try { await captureTask; } catch { }
+            }
+        }
+        catch (RpcException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "[remote-desktop] SubscribeHevcStream failed");
+            throw new RpcException(new Status(StatusCode.Unknown, ex.Message));
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buf);
-            linkedCts.Cancel();
-            try { await captureTask; } catch { }
         }
     }
 
@@ -164,7 +189,13 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
 
         public static ScreenCaptureKitHelperCapturer StartDefault()
         {
-            var exe = Path.Combine(AppContext.BaseDirectory, "native", "macos", "sck_capture");
+            var baseDir = AppContext.BaseDirectory;
+            var exe1 = Path.Combine(baseDir, "native", "macos", "sck_capture", "sck_capture");
+            var exe2 = Path.Combine(baseDir, "native", "macos", "sck_capture");
+            var exe = File.Exists(exe1) ? exe1 : exe2;
+            if (!File.Exists(exe))
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"缺少屏幕采集组件：{exe1}"));
+
             var psi = new ProcessStartInfo
             {
                 FileName = exe,
@@ -174,18 +205,45 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
                 CreateNoWindow = true
             };
 
-            var proc = Process.Start(psi);
+            Process? proc;
+            try
+            {
+                proc = Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"启动屏幕采集组件失败：{ex.Message}"));
+            }
             if (proc is null)
-                throw new InvalidOperationException("Failed to start ScreenCaptureKit helper");
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "启动屏幕采集组件失败"));
 
-            _ = Task.Run(async () => { try { await proc.StandardError.ReadToEndAsync(); } catch { } });
+            var stderrTask = Task.Run(async () => { try { return await proc.StandardError.ReadToEndAsync(); } catch { return ""; } });
 
             var header = new byte[8];
-            ReadExact(proc.StandardOutput.BaseStream, header, 0, 8);
+            try
+            {
+                ReadExact(proc.StandardOutput.BaseStream, header, 0, 8);
+            }
+            catch
+            {
+                var err = "";
+                try
+                {
+                    err = stderrTask.IsCompleted ? stderrTask.Result : "";
+                }
+                catch
+                {
+                }
+
+                if (!string.IsNullOrWhiteSpace(err))
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, err.Trim()));
+
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "屏幕采集组件无输出（请检查 macOS 屏幕录制权限）"));
+            }
             var width = BitConverter.ToInt32(header, 0);
             var height = BitConverter.ToInt32(header, 4);
             if (width <= 0 || height <= 0)
-                throw new InvalidOperationException("Invalid capture header");
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "屏幕采集组件返回了无效的尺寸"));
 
             return new ScreenCaptureKitHelperCapturer(proc, width, height);
         }
@@ -228,6 +286,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
     private sealed class FfmpegHevcEncoder : IDisposable
     {
         private readonly Process _proc;
+        private readonly Task<string> _stderrTask;
 
         public Stream Stdin { get; }
         public Stream Stdout { get; }
@@ -237,6 +296,10 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             _proc = proc;
             Stdin = proc.StandardInput.BaseStream;
             Stdout = proc.StandardOutput.BaseStream;
+            _stderrTask = Task.Run(async () =>
+            {
+                try { return await proc.StandardError.ReadToEndAsync(); } catch { return ""; }
+            });
         }
 
         public static FfmpegHevcEncoder Start(int width, int height, int fps, string qualityPreset)
@@ -253,7 +316,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
 
             var psi = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                FileName = FfmpegLocator.ResolveFfmpegPath(),
                 Arguments = args,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
@@ -274,7 +337,6 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             if (proc is null)
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "ffmpeg 启动失败"));
 
-            _ = DrainErrorAsync(proc);
             return new FfmpegHevcEncoder(proc);
         }
 
@@ -298,15 +360,9 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             };
         }
 
-        private static async Task DrainErrorAsync(Process p)
+        public async Task<string> ReadStderrAsync()
         {
-            try
-            {
-                await p.StandardError.ReadToEndAsync();
-            }
-            catch
-            {
-            }
+            try { return (await _stderrTask).Trim(); } catch { return ""; }
         }
 
         public void Dispose()
