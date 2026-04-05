@@ -304,7 +304,15 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
                 var data = chunk.Data.ToByteArray();
                 bytesInWindow += data.Length;
-                await _decoderIn!.WriteAsync(data, 0, data.Length, ct);
+                try
+                {
+                    await _decoderIn!.WriteAsync(data, 0, data.Length, ct);
+                }
+                catch (Exception ex)
+                {
+                    Status = $"解码管道异常：{ex.Message}";
+                    return;
+                }
                 Status = "已连接";
 
                 if (windowStart.ElapsedMilliseconds >= 1000)

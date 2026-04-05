@@ -6,7 +6,7 @@ namespace XTransferTool.Discovery;
 
 public interface IDiscoveryUdpListener : IAsyncDisposable
 {
-    event EventHandler<UdpAnnounce>? AnnounceReceived;
+    event EventHandler<UdpAnnounceReceived>? AnnounceReceived;
     Task StartAsync(CancellationToken ct = default);
     Task StopAsync();
 }

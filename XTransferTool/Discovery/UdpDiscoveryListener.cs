@@ -14,7 +14,7 @@ public sealed class UdpDiscoveryListener : IDiscoveryUdpListener
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
-    public event EventHandler<UdpAnnounce>? AnnounceReceived;
+    public event EventHandler<UdpAnnounceReceived>? AnnounceReceived;
 
     public Task StartAsync(CancellationToken ct = default)
     {
@@ -73,7 +73,7 @@ public sealed class UdpDiscoveryListener : IDiscoveryUdpListener
                 if (Math.Abs(now - msg.Ts) > 30)
                     continue;
 
-                AnnounceReceived?.Invoke(this, msg);
+                AnnounceReceived?.Invoke(this, new UdpAnnounceReceived(msg, res.RemoteEndPoint));
             }
             catch
             {

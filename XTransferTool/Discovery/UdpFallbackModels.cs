@@ -1,6 +1,9 @@
+using System.Net;
 using System.Text.Json.Serialization;
 
 namespace XTransferTool.Discovery;
+
+public sealed record UdpAnnounceReceived(UdpAnnounce Announce, IPEndPoint RemoteEndPoint);
 
 public sealed class UdpAnnounce
 {

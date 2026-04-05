@@ -54,6 +54,8 @@ public static class AppServices
     private static ControlServerHost? _controlHost;
     private static InMemoryInboxRepository? _inbox;
     private static SettingsStore? _settings;
+    private static UdpDiscoveryAnnouncer? _udpAnnouncer;
+    private static UdpDiscoveryListener? _udpListener;
 
     public static IPeerDirectory? PeerDirectory => _discovery?.Directory;
     public static IInboxRepository? InboxRepository => _inbox;
@@ -101,12 +103,67 @@ public static class AppServices
 
         if (settings.Network.EnableDiscovery)
             await _discovery.StartAsync(identity, controlPort: _controlHost.Port);
+
+        if (settings.Network.EnableDiscovery)
+            await StartUdpDiscoveryAsync(identity, _controlHost.Port);
+    }
+
+    private static async Task StartUdpDiscoveryAsync(DeviceIdentity identity, int controlPort)
+    {
+        _udpAnnouncer = new UdpDiscoveryAnnouncer();
+        _udpListener = new UdpDiscoveryListener();
+
+        _udpListener.AnnounceReceived += (_, ev) =>
+        {
+            try
+            {
+                if (_settings is null || _discovery is null)
+                    return;
+
+                var msg = ev.Announce;
+                if (string.IsNullOrWhiteSpace(msg.Id) || string.Equals(msg.Id, _settings.Current.Identity.DeviceId, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                var ip = ev.RemoteEndPoint.Address.ToString();
+                var peer = new ResolvedPeer(
+                    Id: msg.Id,
+                    Nickname: string.IsNullOrWhiteSpace(msg.Nickname) ? msg.Id[..Math.Min(6, msg.Id.Length)] : msg.Nickname,
+                    Tags: msg.Tags ?? Array.Empty<string>(),
+                    Addresses: [ip],
+                    ControlPort: msg.ControlPort,
+                    Capabilities: msg.Cap ?? Array.Empty<string>(),
+                    Os: msg.Os ?? "",
+                    Ver: msg.Ver ?? "",
+                    LastSeenAt: DateTimeOffset.UtcNow,
+                    InstanceName: "udp:" + msg.Id
+                );
+
+                _discovery.Directory.Upsert(peer);
+            }
+            catch
+            {
+            }
+        };
+
+        await _udpListener.StartAsync();
+        await _udpAnnouncer.StartAsync(identity, controlPort);
     }
 
     public static async Task StopAsync()
     {
         if (_discovery is null)
             return;
+
+        if (_udpListener is not null)
+        {
+            try { await _udpListener.StopAsync(); } catch { }
+            _udpListener = null;
+        }
+        if (_udpAnnouncer is not null)
+        {
+            try { await _udpAnnouncer.StopAsync(); } catch { }
+            _udpAnnouncer = null;
+        }
 
         await _discovery.DisposeAsync();
         _discovery = null;
