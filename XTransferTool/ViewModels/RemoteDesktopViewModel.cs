@@ -77,6 +77,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     [RelayCommand]
     private async Task Connect()
     {
+        var targetPeer = SelectedDevice?.Peer;
+        var targetDisplay = SelectedDevice?.Display;
+
         try
         {
             await Disconnect();
@@ -85,7 +88,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             _statsCts = new CancellationTokenSource();
             _streamCts = new CancellationTokenSource();
 
-            var peer = SelectedDevice?.Peer;
+            var peer = targetPeer;
             if (peer is null)
             {
                 Status = "请选择设备";
@@ -155,11 +158,11 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
         catch (RpcException ex)
         {
-            Status = $"{ex.StatusCode}: {ex.Status.Detail}";
+            Status = $"{(string.IsNullOrWhiteSpace(targetDisplay) ? "" : targetDisplay + " - ")}{ex.StatusCode}: {ex.Status.Detail}";
         }
         catch (Exception ex)
         {
-            Status = ex.Message;
+            Status = $"{(string.IsNullOrWhiteSpace(targetDisplay) ? "" : targetDisplay + " - ")}{ex.Message}";
         }
     }
 
@@ -452,6 +455,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private void RebuildDevices()
     {
+        var selectedId = SelectedDevice?.Peer.Id;
         Devices.Clear();
 
         var localId = _settings?.Current.Identity.DeviceId;
@@ -494,7 +498,20 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             Devices.Add(new RemoteDeviceItem(display, p));
         }
 
+        if (!string.IsNullOrWhiteSpace(selectedId))
+        {
+            var match = Devices.FirstOrDefault(d => string.Equals(d.Peer.Id, selectedId, StringComparison.Ordinal));
+            if (match is not null)
+            {
+                SelectedDevice = match;
+                return;
+            }
+        }
+
         if (SelectedDevice is null && Devices.Count > 0)
-            SelectedDevice = Devices[0];
+        {
+            var nonLocal = Devices.FirstOrDefault(d => d.Peer.Addresses.Length == 0 || d.Peer.Addresses[0] != "127.0.0.1");
+            SelectedDevice = nonLocal ?? Devices[0];
+        }
     }
 }
