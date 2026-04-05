@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Input;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
 using System;
 using System.Collections.Generic;
@@ -45,7 +47,7 @@ public partial class HomeView : UserControl
             return;
         }
 
-        if (e.Data.Contains(DataFormats.Files))
+        if (e.DataTransfer.Contains(DataFormat.File))
         {
             e.DragEffects = DragDropEffects.Copy;
             e.Handled = true;
@@ -70,10 +72,10 @@ public partial class HomeView : UserControl
                 return;
             }
 
-            if (!e.Data.Contains(DataFormats.Files))
+            if (!e.DataTransfer.Contains(DataFormat.File))
                 return;
 
-            var files = e.Data.GetFiles();
+            var files = e.DataTransfer.TryGetFiles();
             if (files is null)
                 return;
 
@@ -174,6 +176,17 @@ public partial class HomeView : UserControl
         vm.SetDropFiles(Array.Empty<string>());
     }
 
+    private static Window? ResolveOwnerWindow(Window? owner)
+    {
+        if (owner is not null)
+            return owner;
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            return desktop.MainWindow;
+
+        return null;
+    }
+
     private static async Task<string?> ShowMessageInputAsync(Window? owner, string targetHint)
     {
         var win = new Window
@@ -195,8 +208,17 @@ public partial class HomeView : UserControl
         var ok = new Button { Content = "确定", Width = 90 };
         var cancel = new Button { Content = "取消", Width = 90 };
 
-        ok.Click += (_, _) => win.Close(tb.Text ?? "");
-        cancel.Click += (_, _) => win.Close(null);
+        var tcs = new TaskCompletionSource<string?>();
+        void SetAndClose(string? value)
+        {
+            if (!tcs.TrySetResult(value))
+                return;
+            win.Close();
+        }
+
+        ok.Click += (_, _) => SetAndClose(tb.Text ?? "");
+        cancel.Click += (_, _) => SetAndClose(null);
+        win.Closed += (_, _) => tcs.TrySetResult(null);
 
         win.Content = new StackPanel
         {
@@ -217,7 +239,13 @@ public partial class HomeView : UserControl
             }
         };
 
-        return await win.ShowDialog<string?>(owner);
+        var resolvedOwner = ResolveOwnerWindow(owner);
+        if (resolvedOwner is not null)
+            _ = win.ShowDialog(resolvedOwner);
+        else
+            win.Show();
+
+        return await tcs.Task;
     }
 
     private static async Task<bool> ShowConfirmAsync(Window? owner, string title, string message)
@@ -233,8 +261,18 @@ public partial class HomeView : UserControl
 
         var ok = new Button { Content = "确定发送", Width = 110 };
         var cancel = new Button { Content = "取消", Width = 90 };
-        ok.Click += (_, _) => win.Close(true);
-        cancel.Click += (_, _) => win.Close(false);
+
+        var tcs = new TaskCompletionSource<bool>();
+        void SetAndClose(bool value)
+        {
+            if (!tcs.TrySetResult(value))
+                return;
+            win.Close();
+        }
+
+        ok.Click += (_, _) => SetAndClose(true);
+        cancel.Click += (_, _) => SetAndClose(false);
+        win.Closed += (_, _) => tcs.TrySetResult(false);
 
         win.Content = new StackPanel
         {
@@ -253,7 +291,13 @@ public partial class HomeView : UserControl
             }
         };
 
-        return await win.ShowDialog<bool>(owner);
+        var resolvedOwner = ResolveOwnerWindow(owner);
+        if (resolvedOwner is not null)
+            _ = win.ShowDialog(resolvedOwner);
+        else
+            win.Show();
+
+        return await tcs.Task;
     }
 
     private static async Task ShowInfoAsync(Window? owner, string title, string message)
@@ -268,7 +312,14 @@ public partial class HomeView : UserControl
         };
 
         var ok = new Button { Content = "确定", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, Width = 90 };
-        ok.Click += (_, _) => win.Close(true);
+        var tcs = new TaskCompletionSource<bool>();
+        ok.Click += (_, _) =>
+        {
+            if (!tcs.TrySetResult(true))
+                return;
+            win.Close();
+        };
+        win.Closed += (_, _) => tcs.TrySetResult(true);
 
         win.Content = new StackPanel
         {
@@ -286,7 +337,13 @@ public partial class HomeView : UserControl
             }
         };
 
-        await win.ShowDialog(owner);
+        var resolvedOwner = ResolveOwnerWindow(owner);
+        if (resolvedOwner is not null)
+            _ = win.ShowDialog(resolvedOwner);
+        else
+            win.Show();
+
+        await tcs.Task;
     }
 }
 

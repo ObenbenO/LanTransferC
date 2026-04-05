@@ -34,7 +34,7 @@ public static class AppServices
 
             if (a.StartsWith("--profile=", StringComparison.Ordinal))
             {
-                _profile = SanitizeProfile(a.Substring("--profile=".Length));
+                _profile = SanitizeProfile(a["--profile=".Length..]);
                 return;
             }
         }
