@@ -190,11 +190,13 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         public static ScreenCaptureKitHelperCapturer StartDefault()
         {
             var baseDir = AppContext.BaseDirectory;
-            var exe1 = Path.Combine(baseDir, "native", "macos", "sck_capture", "sck_capture");
-            var exe2 = Path.Combine(baseDir, "native", "macos", "sck_capture");
-            var exe = File.Exists(exe1) ? exe1 : exe2;
-            if (!File.Exists(exe))
-                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"缺少屏幕采集组件：{exe1}"));
+            var dir = Path.Combine(baseDir, "native", "macos", "sck_capture");
+            var exeInDir = Path.Combine(dir, "sck_capture");
+            var exeAsFile = dir;
+
+            var exe = File.Exists(exeInDir) ? exeInDir : (File.Exists(exeAsFile) ? exeAsFile : "");
+            if (string.IsNullOrWhiteSpace(exe))
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, $"缺少屏幕采集组件（baseDir={baseDir}）：{exeInDir} 或 {exeAsFile}"));
 
             var psi = new ProcessStartInfo
             {
@@ -305,7 +307,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         public static FfmpegHevcEncoder Start(int width, int height, int fps, string qualityPreset)
         {
             var encoder = ChooseEncoder();
-            var (bitrate, preset) = QualityToParams(qualityPreset);
+            var (bitrate, preset) = QualityToParams(qualityPreset, encoder);
 
             var args =
                 $"-hide_banner -loglevel error " +
@@ -364,9 +366,30 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             }
         }
 
-        private static (string Bitrate, string Preset) QualityToParams(string preset)
+        private static (string Bitrate, string Preset) QualityToParams(string qualityPreset, string encoder)
         {
-            var p = (preset ?? "").Trim().ToLowerInvariant();
+            var p = (qualityPreset ?? "").Trim().ToLowerInvariant();
+
+            if (encoder.Contains("libx265", StringComparison.OrdinalIgnoreCase))
+            {
+                return p switch
+                {
+                    "clear" or "清晰" => ("-b:v 10M -maxrate 14M -bufsize 20M", "-preset medium -tune zerolatency"),
+                    "balanced" or "平衡" => ("-b:v 7M -maxrate 9M -bufsize 14M", "-preset fast -tune zerolatency"),
+                    _ => ("-b:v 4M -maxrate 6M -bufsize 8M", "-preset veryfast -tune zerolatency")
+                };
+            }
+
+            if (encoder.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
+            {
+                return p switch
+                {
+                    "clear" or "清晰" => ("-b:v 12M -maxrate 16M -bufsize 24M", ""),
+                    "balanced" or "平衡" => ("-b:v 8M -maxrate 10M -bufsize 16M", ""),
+                    _ => ("-b:v 5M -maxrate 7M -bufsize 10M", "")
+                };
+            }
+
             return p switch
             {
                 "clear" or "清晰" => ("-b:v 12M -maxrate 16M -bufsize 24M", "-preset p3"),
