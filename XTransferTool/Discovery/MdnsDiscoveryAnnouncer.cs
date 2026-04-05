@@ -24,6 +24,7 @@ public sealed class MdnsDiscoveryAnnouncer : IDiscoveryAnnouncer
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var ms = new MulticastService(DiscoveryDiagnostics.FilterMdnsInterfaces);
+        ms.Start();
         _sd = new ServiceDiscovery(ms);
 
         _profile = BuildProfile(identity, controlPort);

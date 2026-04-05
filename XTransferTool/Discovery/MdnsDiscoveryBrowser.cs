@@ -37,6 +37,7 @@ public sealed class MdnsDiscoveryBrowser : IDiscoveryBrowser
         });
 
         var ms = new MulticastService(DiscoveryDiagnostics.FilterMdnsInterfaces);
+        ms.Start();
         _sd = new ServiceDiscovery(ms);
         _sd.ServiceInstanceDiscovered += OnDiscovered;
         _sd.ServiceInstanceShutdown += OnShutdown;
