@@ -73,7 +73,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             AppPage.Home => new HomeViewModel(_peerDirectory, _inbox, _settings),
             AppPage.Inbox => new InboxViewModel(_inbox),
-            AppPage.RemoteDesktop => new RemoteDesktopViewModel(),
+            AppPage.RemoteDesktop => new RemoteDesktopViewModel(_peerDirectory, _settings),
             AppPage.Settings => new SettingsViewModel(_settings),
             _ => CurrentPage
         };

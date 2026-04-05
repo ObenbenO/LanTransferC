@@ -29,7 +29,7 @@
           <ListBox.ItemTemplate>
             <DataTemplate>
               <Border CornerRadius="12" Padding="12,10" Background="{DynamicResource MainPanelBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" Margin="0,0,0,10">
-                <TextBlock Text="{Binding .}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
+                <TextBlock Text="{Binding Display}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="13"/>
               </Border>
             </DataTemplate>
           </ListBox.ItemTemplate>
@@ -50,12 +50,14 @@
                 BorderBrush="{DynamicResource AccentBrush}"
                 BorderThickness="1">
           <Grid>
-            <TextBlock Text="REMOTE CANVAS"
-                       FontSize="22"
-                       FontWeight="SemiBold"
-                       Foreground="{DynamicResource AccentBrush}"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"/>
+            <Image Name="RemoteImage"
+                   Source="{Binding Frame}"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Stretch"
+                   VerticalAlignment="Stretch"
+                   PointerMoved="RemoteImage_PointerMoved"
+                   PointerPressed="RemoteImage_PointerPressed"
+                   PointerReleased="RemoteImage_PointerReleased"/>
 
             <!-- Control bar (fake) -->
             <Border HorizontalAlignment="Center"
@@ -93,7 +95,7 @@
                     BorderBrush="{DynamicResource PanelBorderBrush}"
                     BorderThickness="1">
               <StackPanel Spacing="6">
-                <TextBlock Text="{Binding SelectedDevice}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
+                <TextBlock Text="{Binding SelectedDevice.Display}" Foreground="{DynamicResource SubtleTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Latency, StringFormat=延迟：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Fps, StringFormat=帧率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>
                 <TextBlock Text="{Binding Bitrate, StringFormat=码率：{0}}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="12"/>

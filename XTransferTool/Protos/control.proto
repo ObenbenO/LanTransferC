@@ -193,6 +193,10 @@ service RemoteControlService {
   rpc SubscribeStats(SubscribeRemoteStatsRequest) returns (stream RemoteStatsEnvelope);
 }
 
+service RemoteDesktopStreamService {
+  rpc SubscribeHevcStream(SubscribeHevcStreamRequest) returns (stream HevcStreamChunk);
+}
+
 message RemotePreference {
   string qualityPreset = 1; // smooth/balanced/clear
   string maxResolution = 2; // optional, e.g. "1920x1080"
@@ -260,5 +264,22 @@ message RemoteStatsEnvelope {
   float bitrateMbps = 4;
   float packetLoss = 5;
   string resolution = 6;
+}
+
+message SubscribeHevcStreamRequest {
+  string sessionId = 1;
+  string fromId = 2;
+  int32 targetFps = 3;
+  string maxResolution = 4;
+  string qualityPreset = 5;
+}
+
+message HevcStreamChunk {
+  int64 seq = 1;
+  int64 tsMs = 2;
+  bytes data = 3;
+  int32 width = 4;
+  int32 height = 5;
+  string codec = 6; // "hevc"
 }
 

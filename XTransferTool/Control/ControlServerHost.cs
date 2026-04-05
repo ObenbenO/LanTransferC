@@ -107,6 +107,7 @@ public sealed class ControlServerHost : IAsyncDisposable
                         endpoints.MapGrpcService<MessagingServiceImpl>();
                         endpoints.MapGrpcService<XTransferTool.Transfer.FileTransferServiceImpl>();
                         endpoints.MapGrpcService<XTransferTool.Remote.RemoteControlServiceImpl>();
+                        endpoints.MapGrpcService<XTransferTool.Remote.RemoteDesktopStreamServiceImpl>();
                     });
                 });
             })

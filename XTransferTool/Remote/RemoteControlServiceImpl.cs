@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Grpc.Core;
+using XTransferTool.Config;
 using XTransferTool.Control.Proto;
 
 namespace XTransferTool.Remote;
@@ -10,11 +12,13 @@ namespace XTransferTool.Remote;
 public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteControlServiceBase
 {
     private readonly RemoteSessionStore _sessions;
+    private readonly SettingsStore? _settings;
     private readonly ConcurrentDictionary<string, BlockingCollection<IceCandidate>> _iceQueues = new(StringComparer.Ordinal);
 
-    public RemoteControlServiceImpl(RemoteSessionStore sessions)
+    public RemoteControlServiceImpl(RemoteSessionStore sessions, SettingsStore? settings = null)
     {
         _sessions = sessions;
+        _settings = settings;
     }
 
     public override Task<CreateRemoteSessionResponse> CreateSession(CreateRemoteSessionRequest request, ServerCallContext context)
@@ -80,14 +84,17 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
 
     public override async Task InputStream(IAsyncStreamReader<RemoteInputEvent> requestStream, IServerStreamWriter<RemoteInputAck> responseStream, ServerCallContext context)
     {
+        if (_settings is not null && !_settings.Current.Remote.AllowRemoteControl)
+            throw new RpcException(new Status(StatusCode.PermissionDenied, "remote control disabled"));
+
         await foreach (var ev in requestStream.ReadAllAsync(context.CancellationToken))
         {
-            // V1: accept all; future: authorize by session/mode and throttle.
+            var accepted = InputInjector.TryApply(ev, out var reason);
             await responseStream.WriteAsync(new RemoteInputAck
             {
                 Seq = ev.Seq,
-                Accepted = true,
-                Reason = ""
+                Accepted = accepted,
+                Reason = reason
             });
         }
     }
@@ -113,6 +120,172 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
                 Resolution = "1920x1080"
             };
             await responseStream.WriteAsync(env);
+        }
+    }
+
+    private static class InputInjector
+    {
+        public static bool TryApply(RemoteInputEvent ev, out string reason)
+        {
+            reason = "";
+            var type = (ev.Type ?? "").Trim();
+            if (type.Length == 0)
+            {
+                reason = "missing type";
+                return false;
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                reason = "platform not supported";
+                return false;
+            }
+
+            var payload = ev.Payload.Memory.Span;
+            if (type.Equals("mouseMove", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.Length < 8)
+                {
+                    reason = "payload too small";
+                    return false;
+                }
+
+                var x = BitConverter.ToInt32(payload.Slice(0, 4));
+                var y = BitConverter.ToInt32(payload.Slice(4, 4));
+                return WindowsSendInput.MouseMove(x, y, out reason);
+            }
+
+            if (type.Equals("mouseDown", StringComparison.OrdinalIgnoreCase))
+            {
+                var button = payload.Length > 0 ? payload[0] : (byte)0;
+                return WindowsSendInput.MouseButton(button, isDown: true, out reason);
+            }
+
+            if (type.Equals("mouseUp", StringComparison.OrdinalIgnoreCase))
+            {
+                var button = payload.Length > 0 ? payload[0] : (byte)0;
+                return WindowsSendInput.MouseButton(button, isDown: false, out reason);
+            }
+
+            reason = "unsupported type";
+            return false;
+        }
+    }
+
+    private static class WindowsSendInput
+    {
+        private const int INPUT_MOUSE = 0;
+        private const uint MOUSEEVENTF_MOVE = 0x0001;
+        private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+        private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
+        private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+        private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+        private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+
+        private const int SM_CXVIRTUALSCREEN = 78;
+        private const int SM_CYVIRTUALSCREEN = 79;
+        private const int SM_XVIRTUALSCREEN = 76;
+        private const int SM_YVIRTUALSCREEN = 77;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct INPUT
+        {
+            public int type;
+            public MOUSEINPUT mi;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOUSEINPUT
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint cInputs, INPUT[] pInputs, int cbSize);
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int nIndex);
+
+        public static bool MouseMove(int x, int y, out string reason)
+        {
+            reason = "";
+            var vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            var vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            var vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            var vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if (vw <= 1 || vh <= 1)
+            {
+                reason = "virtual screen size unavailable";
+                return false;
+            }
+
+            var clampedX = Math.Clamp(x, vx, vx + vw - 1);
+            var clampedY = Math.Clamp(y, vy, vy + vh - 1);
+
+            var absX = (int)Math.Round((clampedX - vx) * 65535.0 / (vw - 1));
+            var absY = (int)Math.Round((clampedY - vy) * 65535.0 / (vh - 1));
+
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                mi = new MOUSEINPUT
+                {
+                    dx = absX,
+                    dy = absY,
+                    mouseData = 0,
+                    dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero
+                }
+            };
+
+            var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+            if (sent != 1)
+            {
+                reason = $"SendInput failed: {Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool MouseButton(byte button, bool isDown, out string reason)
+        {
+            reason = "";
+            uint flag = button switch
+            {
+                1 => isDown ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
+                _ => isDown ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP
+            };
+
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                mi = new MOUSEINPUT
+                {
+                    dx = 0,
+                    dy = 0,
+                    mouseData = 0,
+                    dwFlags = flag,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero
+                }
+            };
+
+            var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+            if (sent != 1)
+            {
+                reason = $"SendInput failed: {Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            return true;
         }
     }
 }
