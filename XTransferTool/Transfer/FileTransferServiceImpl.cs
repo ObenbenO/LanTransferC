@@ -130,7 +130,8 @@ public sealed class FileTransferServiceImpl : FileTransferService.FileTransferSe
                     // For demo, chunkSize is not stored; default 1MB.
                     chunkSizeBytes = 1024 * 1024;
 
-                    var savePath = System.IO.Path.Combine(AppContext.BaseDirectory, ".recv", transferId, $"{itemId}.part");
+                    var profile = _settings?.Profile ?? "default";
+                    var savePath = System.IO.Path.Combine(XTransferTool.AppPaths.ExeDir, "data", profile, "recv_tmp", transferId, $"{itemId}.part");
                     state = _uploadStates.GetOrCreate(transferId, itemId, () => new UploadItemState(savePath));
                     state.EnsureOpen();
                 }

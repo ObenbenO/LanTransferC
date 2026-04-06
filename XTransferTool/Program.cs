@@ -14,6 +14,7 @@ sealed class Program
     {
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
         AppServices.SetStartupArgs(args);
+        XTransferTool.Packaging.BundledTools.Ensure();
         XTransferTool.Logging.AppLog.Init(AppServices.Profile);
         try
         {

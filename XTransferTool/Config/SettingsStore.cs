@@ -122,17 +122,7 @@ public sealed class SettingsStore
 
     private static string ResolveSettingsPath(string profile)
     {
-        // Prefer "portable" mode: save next to executable if writable.
-        // This matches the user's expectation: install dir (or subdir) holds personal data when possible.
-        var portable = Path.Combine(AppContext.BaseDirectory, "data", profile, "appsettings.json");
-        if (CanWriteTo(Path.GetDirectoryName(portable)!))
-            return portable;
-
-        // Fallback to OS conventional per-user data directory.
-        var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (string.IsNullOrWhiteSpace(baseDir))
-            baseDir = AppContext.BaseDirectory;
-        return Path.Combine(baseDir, "XTransferTool", profile, "appsettings.json");
+        return Path.Combine(XTransferTool.AppPaths.ExeDir, "config", profile, "appsettings.json");
     }
 
     private static bool CanWriteTo(string directory)
@@ -153,10 +143,7 @@ public sealed class SettingsStore
 
     private static string DefaultReceiveFolder(string profile)
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(home))
-            return AppContext.BaseDirectory;
-        return Path.Combine(home, "Downloads", "XTransferTool", profile);
+        return Path.Combine(XTransferTool.AppPaths.ExeDir, "data", profile, "recv");
     }
 }
 

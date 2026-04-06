@@ -7,7 +7,7 @@ public static class FfmpegLocator
 {
     public static string ResolveFfmpegPath()
     {
-        var baseDir = AppContext.BaseDirectory;
+        var baseDir = XTransferTool.AppPaths.ExeDir;
 
         if (OperatingSystem.IsWindows())
         {
@@ -26,4 +26,3 @@ public static class FfmpegLocator
         return "ffmpeg";
     }
 }
-

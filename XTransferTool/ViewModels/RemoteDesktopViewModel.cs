@@ -15,11 +15,13 @@ using Avalonia.Input;
 using System.Text;
 using System.Buffers;
 using System.Threading.Channels;
+using System.Net.Http;
 using XTransferTool.Config;
 using XTransferTool.Discovery;
 using XTransferTool.Control.Proto;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Serilog;
 
 namespace XTransferTool.ViewModels;
 
@@ -147,7 +149,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 localId = "local";
             _localId = localId;
 
-            var controlChannel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
+            Log.Information("[remote-desktop] connect to {Address}:{Port}", address, peer.ControlPort);
+            var controlChannel = CreateGrpcChannel(address, peer.ControlPort);
             var control = new RemoteControlService.RemoteControlServiceClient(controlChannel);
 
             var create = await control.CreateSessionAsync(new CreateRemoteSessionRequest
@@ -222,7 +225,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Status = $"{(string.IsNullOrWhiteSpace(targetDisplay) ? "" : targetDisplay + " - ")}{ex.Message}";
+            Log.Error(ex, "[remote-desktop] connect failed");
+            var msg = ex.GetBaseException().Message;
+            Status = $"{(string.IsNullOrWhiteSpace(targetDisplay) ? "" : targetDisplay + " - ")}{msg}";
         }
     }
 
@@ -588,7 +593,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             _ => ("smooth", 45)
         };
 
-        var streamChannel = GrpcChannel.ForAddress($"http://{_remoteAddress}:{_remotePort}");
+        var streamChannel = CreateGrpcChannel(_remoteAddress, _remotePort);
         var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(streamChannel);
 
         var call = stream.SubscribeHevcStream(new SubscribeHevcStreamRequest
@@ -602,6 +607,22 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
         _videoTask = Task.Run(() => ConsumeHevcAsync(call, token, gen), token);
         await Task.CompletedTask;
+    }
+
+    private static GrpcChannel CreateGrpcChannel(string host, int port)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = true,
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+            KeepAlivePingDelay = TimeSpan.FromSeconds(20),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(10)
+        };
+
+        return GrpcChannel.ForAddress($"http://{host}:{port}", new GrpcChannelOptions
+        {
+            HttpHandler = handler
+        });
     }
 
     private async Task AutoQualityLoopAsync(CancellationToken ct)

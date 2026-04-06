@@ -8,6 +8,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
     <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
@@ -47,5 +52,17 @@
 
   <ItemGroup>
     <Protobuf Include="Protos\control.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="native\windows\ffmpeg\ffmpeg.exe" Condition="Exists('native\windows\ffmpeg\ffmpeg.exe')">
+      <LogicalName>xtransfer.native.windows.ffmpeg.exe</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="native\macos\ffmpeg\ffmpeg" Condition="Exists('native\macos\ffmpeg\ffmpeg')">
+      <LogicalName>xtransfer.native.macos.ffmpeg</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="native\macos\sck_capture\sck_capture" Condition="Exists('native\macos\sck_capture\sck_capture')">
+      <LogicalName>xtransfer.native.macos.sck_capture</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

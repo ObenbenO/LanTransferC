@@ -15,8 +15,8 @@ public static class AppLog
         if (!string.IsNullOrWhiteSpace(overrideDir))
             return Path.Combine(overrideDir.Trim(), p);
 
-        var baseDir = AppContext.BaseDirectory;
-        var prefer = Path.GetFullPath(Path.Combine(baseDir, "..", "log", p));
+        var baseDir = XTransferTool.AppPaths.ExeDir;
+        var prefer = Path.GetFullPath(Path.Combine(baseDir, "log", p));
         if (TryEnsureWritable(prefer))
             return prefer;
 

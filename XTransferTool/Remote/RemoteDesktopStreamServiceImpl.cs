@@ -282,7 +282,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
 
         public static ScreenCaptureKitHelperCapturer StartDefault()
         {
-            var baseDir = AppContext.BaseDirectory;
+            var baseDir = XTransferTool.AppPaths.ExeDir;
             var dir = Path.Combine(baseDir, "native", "macos", "sck_capture");
             var exeInDir = Path.Combine(dir, "sck_capture");
             var exeAsFile = dir;
