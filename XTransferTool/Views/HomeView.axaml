@@ -12,12 +12,6 @@
     <!-- Header -->
     <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
       <TextBlock Text="主页" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
-      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
-        <TextBlock Text="拖拽文件到左侧用户/标签即可发送（演示 UI）" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
-      </Border>
-      <Button Content="发送演示留言" Command="{Binding SendDemoMessageCommand}" Height="34" CornerRadius="10"/>
-      <Button Content="创建演示传输" Command="{Binding CreateDemoTransferCommand}" Height="34" CornerRadius="10"/>
-      <Button Content="演示上传Chunks" Command="{Binding UploadDemoChunksCommand}" Height="34" CornerRadius="10"/>
     </StackPanel>
 
     <!-- Left: user tree -->

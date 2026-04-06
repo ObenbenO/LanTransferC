@@ -10,9 +10,6 @@
   <Grid Name="RootGrid" ColumnDefinitions="340,*" RowDefinitions="Auto,*" Margin="2">
     <StackPanel Name="HeaderPanel" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="12" Margin="0,0,0,14">
       <TextBlock Text="远程桌面" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
-      <Border CornerRadius="999" Padding="10,4" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
-        <TextBlock Text="HUD：延迟 / 帧率 / 码率（演示 UI）" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}"/>
-      </Border>
     </StackPanel>
 
     <!-- Left device list -->

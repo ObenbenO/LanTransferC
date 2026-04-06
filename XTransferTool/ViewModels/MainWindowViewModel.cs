@@ -79,10 +79,6 @@ public partial class MainWindowViewModel : ViewModelBase
         };
     }
 
-    public string DiscoverySummary => "发现：12 在线";
-    public string TransferSummary => "队列：1 进行中";
-    public string RemoteSummary => "远控：未连接";
-
     private void OnSettingsChanged(object? sender, AppSettings settings)
     {
         IdentitySummary = BuildIdentitySummary(settings);
