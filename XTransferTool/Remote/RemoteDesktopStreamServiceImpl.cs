@@ -39,56 +39,73 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             var width = capturer.Width;
             var height = capturer.Height;
 
-            using var encoder = FfmpegHevcEncoder.Start(width, height, targetFps, request.QualityPreset ?? "");
-
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
-            var frameBytes = width * height * 4;
-            var frameQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1)
+            RpcException? lastFail = null;
+            foreach (var encoderArg in FfmpegHevcEncoder.EncoderCandidates())
             {
-                SingleReader = true,
-                SingleWriter = true,
-                AllowSynchronousContinuations = false,
-                FullMode = BoundedChannelFullMode.Wait
-            });
-            var captureTask = Task.Run(() => CaptureLoopAsync(capturer, frameBytes, frameQueue, targetFps, linkedCts.Token), linkedCts.Token);
-            var encodeTask = Task.Run(() => EncodeLoopAsync(frameBytes, frameQueue, encoder, linkedCts.Token), linkedCts.Token);
+                if (context.CancellationToken.IsCancellationRequested)
+                    break;
 
-            var seq = 0L;
-            var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
-            try
-            {
-                while (true)
+                using var encoder = FfmpegHevcEncoder.Start(width, height, targetFps, request.QualityPreset ?? "", encoderArg);
+
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+                var frameBytes = width * height * 4;
+                var frameQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1)
                 {
-                    var n = await encoder.Stdout.ReadAsync(buf, 0, buf.Length, context.CancellationToken);
-                    if (n <= 0)
-                        break;
+                    SingleReader = true,
+                    SingleWriter = true,
+                    AllowSynchronousContinuations = false,
+                    FullMode = BoundedChannelFullMode.Wait
+                });
+                var captureTask = Task.Run(() => CaptureLoopAsync(capturer, frameBytes, frameQueue, targetFps, linkedCts.Token), linkedCts.Token);
+                var encodeTask = Task.Run(() => EncodeLoopAsync(frameBytes, frameQueue, encoder, linkedCts.Token), linkedCts.Token);
 
-                    await responseStream.WriteAsync(new HevcStreamChunk
+                var seq = 0L;
+                var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
+                try
+                {
+                    while (true)
                     {
-                        Seq = Interlocked.Increment(ref seq),
-                        TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        Data = ByteString.CopyFrom(buf, 0, n),
-                        Width = width,
-                        Height = height,
-                        Codec = encoder.Codec
-                    }, context.CancellationToken);
-                }
+                        var n = await encoder.Stdout.ReadAsync(buf, 0, buf.Length, context.CancellationToken);
+                        if (n <= 0)
+                            break;
 
-                if (seq == 0 && !context.CancellationToken.IsCancellationRequested)
-                {
+                        await responseStream.WriteAsync(new HevcStreamChunk
+                        {
+                            Seq = Interlocked.Increment(ref seq),
+                            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            Data = ByteString.CopyFrom(buf, 0, n),
+                            Width = width,
+                            Height = height,
+                            Codec = encoder.Codec
+                        }, context.CancellationToken);
+                    }
+
+                    if (seq > 0 || context.CancellationToken.IsCancellationRequested)
+                        return;
+
                     var err = await encoder.ReadStderrAsync();
                     var detail = string.IsNullOrWhiteSpace(err) ? "encoder produced no output" : err;
                     if (detail.Length > 1200)
                         detail = detail.Substring(0, 1200);
-                    throw new RpcException(new Status(StatusCode.FailedPrecondition, detail));
+
+                    var ex = new RpcException(new Status(StatusCode.FailedPrecondition, detail));
+                    lastFail = ex;
+
+                    if (encoderArg.Contains("_nvenc", StringComparison.OrdinalIgnoreCase) && LooksLikeNvencDriverIssue(detail))
+                        continue;
+
+                    throw ex;
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buf);
+                    linkedCts.Cancel();
+                    try { await Task.WhenAll(captureTask, encodeTask); } catch { }
                 }
             }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buf);
-                linkedCts.Cancel();
-                try { await Task.WhenAll(captureTask, encodeTask); } catch { }
-            }
+
+            if (lastFail is not null)
+                throw lastFail;
         }
         catch (RpcException)
         {
@@ -102,6 +119,18 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         finally
         {
         }
+    }
+
+    private static bool LooksLikeNvencDriverIssue(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+            return false;
+
+        return stderr.Contains("nvenc", StringComparison.OrdinalIgnoreCase) ||
+               stderr.Contains("nvcuda", StringComparison.OrdinalIgnoreCase) ||
+               stderr.Contains("Nvidia", StringComparison.OrdinalIgnoreCase) ||
+               stderr.Contains("Driver does not support", StringComparison.OrdinalIgnoreCase) ||
+               stderr.Contains("minimum required", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task CapturePumpAsync(DesktopCapturer capturer, FfmpegHevcEncoder encoder, int fps, CancellationToken ct)
@@ -400,9 +429,26 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             });
         }
 
-        public static FfmpegHevcEncoder Start(int width, int height, int fps, string qualityPreset)
+        public static string[] EncoderCandidates()
         {
-            var encoder = ChooseEncoder();
+            if (OperatingSystem.IsWindows())
+            {
+                if (HasNvidiaCudaDriver())
+                    return ["-c:v h264_nvenc", "-c:v libx264"];
+                return ["-c:v libx264"];
+            }
+
+            if (OperatingSystem.IsMacOS())
+                return ["-c:v h264_videotoolbox", "-c:v libx264"];
+
+            return ["-c:v libx264"];
+        }
+
+        public static FfmpegHevcEncoder Start(int width, int height, int fps, string qualityPreset) =>
+            Start(width, height, fps, qualityPreset, EncoderCandidates()[0]);
+
+        public static FfmpegHevcEncoder Start(int width, int height, int fps, string qualityPreset, string encoder)
+        {
             var (bitrate, preset) = QualityToParams(qualityPreset, encoder);
             var outFmt = InferOutputFormat(encoder);
             var codec = outFmt == "hevc" ? "hevc" : "h264";
@@ -438,15 +484,6 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "ffmpeg 启动失败"));
 
             return new FfmpegHevcEncoder(proc, codec);
-        }
-
-        private static string ChooseEncoder()
-        {
-            if (OperatingSystem.IsWindows())
-                return HasNvidiaCudaDriver() ? "-c:v h264_nvenc" : "-c:v libx264";
-            if (OperatingSystem.IsMacOS())
-                return "-c:v h264_videotoolbox";
-            return "-c:v libx264";
         }
 
         private static string InferOutputFormat(string encoder) =>
