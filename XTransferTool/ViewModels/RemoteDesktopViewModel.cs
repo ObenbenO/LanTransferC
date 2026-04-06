@@ -14,6 +14,7 @@ using Avalonia.Threading;
 using Avalonia.Input;
 using System.Text;
 using System.Buffers;
+using System.Threading.Channels;
 using XTransferTool.Config;
 using XTransferTool.Discovery;
 using XTransferTool.Control.Proto;
@@ -60,6 +61,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private CancellationTokenSource? _streamCts;
     private long _inputSeq;
     private AsyncDuplexStreamingCall<RemoteInputEvent, RemoteInputAck>? _inputCall;
+    private Channel<RemoteInputEvent>? _inputQueue;
+    private CancellationTokenSource? _inputSendCts;
+    private Task? _inputSendLoop;
     private Process? _decoder;
     private Stream? _decoderIn;
     private Stream? _decoderOut;
@@ -135,8 +139,11 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             _sessionId = create.SessionId;
 
             _inputCall = control.InputStream(cancellationToken: _streamCts.Token);
+            StartInputSendLoop(_inputCall, _streamCts.Token);
             _ = DrainAcksAsync(_inputCall, _streamCts.Token);
             StartMouseMovePump(_streamCts.Token);
+            EnqueueMouseButtonUp(0);
+            EnqueueMouseButtonUp(1);
 
             var stats = control.SubscribeStats(new SubscribeRemoteStatsRequest
             {
@@ -203,9 +210,13 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         _statsCts?.Cancel();
         _streamCts?.Cancel();
         _mouseMoveCts?.Cancel();
+        _inputSendCts?.Cancel();
 
         try
         {
+            EnqueueMouseButtonUp(0);
+            EnqueueMouseButtonUp(1);
+
             if (_inputCall is not null)
                 await _inputCall.RequestStream.CompleteAsync();
         }
@@ -226,6 +237,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         try { _decoder?.Dispose(); } catch { }
 
         _inputCall = null;
+        _inputQueue = null;
+        _inputSendCts = null;
+        _inputSendLoop = null;
         _decoder = null;
         _decoderIn = null;
         _decoderOut = null;
@@ -286,16 +300,13 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     public void SendText(string text)
     {
-        var call = _inputCall;
-        if (call is null)
-            return;
         if (string.IsNullOrWhiteSpace(_sessionId))
             return;
         if (string.IsNullOrEmpty(text))
             return;
 
         var bytes = Encoding.UTF8.GetBytes(text);
-        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        Enqueue(new RemoteInputEvent
         {
             SessionId = _sessionId,
             Seq = Interlocked.Increment(ref _inputSeq),
@@ -305,15 +316,65 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         });
     }
 
-    private void SendMouseButton(byte button, bool isDown)
+    private void EnqueueMouseButtonUp(byte button)
     {
-        var call = _inputCall;
-        if (call is null)
-            return;
         if (string.IsNullOrWhiteSpace(_sessionId))
             return;
 
-        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        Enqueue(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = "mouseUp",
+            Payload = Google.Protobuf.ByteString.CopyFrom([button])
+        });
+    }
+
+    private bool Enqueue(RemoteInputEvent ev)
+    {
+        var q = _inputQueue;
+        if (q is null)
+            return false;
+        return q.Writer.TryWrite(ev);
+    }
+
+    private void StartInputSendLoop(AsyncDuplexStreamingCall<RemoteInputEvent, RemoteInputAck> call, CancellationToken ct)
+    {
+        _inputSendCts?.Cancel();
+        _inputSendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = _inputSendCts.Token;
+
+        _inputQueue = Channel.CreateUnbounded<RemoteInputEvent>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            AllowSynchronousContinuations = false
+        });
+
+        _inputSendLoop = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var ev in _inputQueue.Reader.ReadAllAsync(token))
+                    await call.RequestStream.WriteAsync(ev);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Status = $"输入通道异常：{ex.Message}";
+            }
+        }, token);
+    }
+
+    private void SendMouseButton(byte button, bool isDown)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+
+        Enqueue(new RemoteInputEvent
         {
             SessionId = _sessionId,
             Seq = Interlocked.Increment(ref _inputSeq),
@@ -325,9 +386,6 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private void SendMouseMoveImmediate(int x, int y)
     {
-        var call = _inputCall;
-        if (call is null)
-            return;
         if (string.IsNullOrWhiteSpace(_sessionId))
             return;
 
@@ -335,7 +393,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         BitConverter.GetBytes(x).CopyTo(payload, 0);
         BitConverter.GetBytes(y).CopyTo(payload, 4);
 
-        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        Enqueue(new RemoteInputEvent
         {
             SessionId = _sessionId,
             Seq = Interlocked.Increment(ref _inputSeq),
@@ -380,9 +438,6 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private void SendKey(int windowsVk, bool isDown)
     {
-        var call = _inputCall;
-        if (call is null)
-            return;
         if (string.IsNullOrWhiteSpace(_sessionId))
             return;
         if (windowsVk <= 0 || windowsVk > 0xFF)
@@ -390,7 +445,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
         var payload = new byte[4];
         BitConverter.GetBytes(windowsVk).CopyTo(payload, 0);
-        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        Enqueue(new RemoteInputEvent
         {
             SessionId = _sessionId,
             Seq = Interlocked.Increment(ref _inputSeq),
