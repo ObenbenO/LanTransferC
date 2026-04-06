@@ -231,6 +231,39 @@ public partial class RemoteDesktopView : UserControl
         e.Handled = true;
     }
 
+    private void RemoteImage_PointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (DataContext is not RemoteDesktopViewModel vm)
+            return;
+        if (sender is not Avalonia.Controls.Control c)
+            return;
+        if (vm.RemoteWidth <= 0 || vm.RemoteHeight <= 0)
+            return;
+
+        var p = e.GetPosition(c);
+        if (!TryMapToRemotePixels(c.Bounds, p, vm.RemoteWidth, vm.RemoteHeight, clampOutside: true, out var rx, out var ry))
+        {
+            if (_hasLastPos)
+            {
+                rx = _lastX;
+                ry = _lastY;
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        _hasLastPos = true;
+        _lastX = rx;
+        _lastY = ry;
+
+        var dy = (int)Math.Round(e.Delta.Y);
+        var dx = (int)Math.Round(e.Delta.X);
+        vm.SendMouseWheel(rx, ry, dy, dx);
+        e.Handled = true;
+    }
+
     private static bool TryMapToRemotePixels(Rect bounds, Point localPoint, int remoteW, int remoteH, bool clampOutside, out int x, out int y)
     {
         x = 0;

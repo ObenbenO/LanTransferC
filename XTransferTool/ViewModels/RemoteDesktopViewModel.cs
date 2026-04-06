@@ -288,6 +288,27 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         SendMouseButton(button, isDown: false);
     }
 
+    public void SendMouseWheel(int x, int y, int deltaY, int deltaX)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+
+        SendMouseMoveImmediate(x, y);
+
+        var payload = new byte[8];
+        BitConverter.GetBytes(deltaY).CopyTo(payload, 0);
+        BitConverter.GetBytes(deltaX).CopyTo(payload, 4);
+
+        Enqueue(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = "mouseWheel",
+            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
+        });
+    }
+
     public void SendKeyDown(int windowsVk)
     {
         SendKey(windowsVk, isDown: true);

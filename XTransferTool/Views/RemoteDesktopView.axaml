@@ -59,6 +59,7 @@
                    PointerMoved="RemoteImage_PointerMoved"
                    PointerPressed="RemoteImage_PointerPressed"
                    PointerReleased="RemoteImage_PointerReleased"
+                   PointerWheelChanged="RemoteImage_PointerWheelChanged"
                    PointerCaptureLost="RemoteImage_PointerCaptureLost"
                    PointerExited="RemoteImage_PointerExited"
                    KeyDown="RemoteImage_KeyDown"

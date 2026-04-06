@@ -167,6 +167,19 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
                 return WindowsSendInput.MouseButton(button, isDown: false, out reason);
             }
 
+            if (type.Equals("mouseWheel", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.Length < 8)
+                {
+                    reason = "payload too small";
+                    return false;
+                }
+
+                var dy = BitConverter.ToInt32(payload.Slice(0, 4));
+                var dx = BitConverter.ToInt32(payload.Slice(4, 4));
+                return WindowsSendInput.MouseWheel(dy, dx, out reason);
+            }
+
             if (type.Equals("keyDown", StringComparison.OrdinalIgnoreCase))
             {
                 if (payload.Length < 4)
@@ -219,6 +232,9 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
         private const uint MOUSEEVENTF_LEFTUP = 0x0004;
         private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
         private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+        private const uint MOUSEEVENTF_WHEEL = 0x0800;
+        private const uint MOUSEEVENTF_HWHEEL = 0x01000;
+        private const int WHEEL_DELTA = 120;
         private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
         private const uint KEYEVENTF_KEYUP = 0x0002;
         private const uint KEYEVENTF_UNICODE = 0x0004;
@@ -336,6 +352,58 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
                         dx = 0,
                         dy = 0,
                         mouseData = 0,
+                        dwFlags = flag,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+
+            var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+            if (sent != 1)
+            {
+                reason = $"SendInput failed: {Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool MouseWheel(int deltaY, int deltaX, out string reason)
+        {
+            reason = "";
+
+            var dy = Math.Clamp(deltaY, -10, 10) * WHEEL_DELTA;
+            var dx = Math.Clamp(deltaX, -10, 10) * WHEEL_DELTA;
+
+            if (dy != 0)
+            {
+                if (!MouseWheelCore(MOUSEEVENTF_WHEEL, dy, out reason))
+                    return false;
+            }
+
+            if (dx != 0)
+            {
+                if (!MouseWheelCore(MOUSEEVENTF_HWHEEL, dx, out reason))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool MouseWheelCore(uint flag, int wheelData, out string reason)
+        {
+            reason = "";
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                u = new INPUTUNION
+                {
+                    mi = new MOUSEINPUT
+                    {
+                        dx = 0,
+                        dy = 0,
+                        mouseData = unchecked((uint)wheelData),
                         dwFlags = flag,
                         time = 0,
                         dwExtraInfo = IntPtr.Zero
