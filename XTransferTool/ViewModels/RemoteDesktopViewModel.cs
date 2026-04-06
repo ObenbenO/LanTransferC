@@ -16,6 +16,8 @@ using System.Text;
 using System.Buffers;
 using System.Threading.Channels;
 using System.Net.Http;
+using System.Net;
+using System.Net.Sockets;
 using XTransferTool.Config;
 using XTransferTool.Discovery;
 using XTransferTool.Control.Proto;
@@ -135,7 +137,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 return;
             }
 
-            var address = peer.Addresses?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a)) ?? "";
+            var address = SelectBestAddress(peer.Addresses);
             if (string.IsNullOrWhiteSpace(address))
             {
                 Status = "设备地址为空";
@@ -616,13 +618,53 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             EnableMultipleHttp2Connections = true,
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
             KeepAlivePingDelay = TimeSpan.FromSeconds(20),
-            KeepAlivePingTimeout = TimeSpan.FromSeconds(10)
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+            UseProxy = false,
+            Proxy = null,
+            ConnectTimeout = TimeSpan.FromSeconds(5)
         };
 
         return GrpcChannel.ForAddress($"http://{host}:{port}", new GrpcChannelOptions
         {
             HttpHandler = handler
         });
+    }
+
+    private static string SelectBestAddress(string[]? addresses)
+    {
+        if (addresses is null || addresses.Length == 0)
+            return "";
+
+        string? bestV4 = null;
+        string? bestV6 = null;
+        foreach (var a in addresses)
+        {
+            if (string.IsNullOrWhiteSpace(a))
+                continue;
+
+            var s = a.Trim();
+            if (!IPAddress.TryParse(s, out var ip))
+            {
+                if (bestV4 is null)
+                    bestV4 = s;
+                continue;
+            }
+
+            if (ip.AddressFamily == AddressFamily.InterNetwork)
+            {
+                if (bestV4 is null)
+                    bestV4 = s;
+                continue;
+            }
+
+            if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                if (bestV6 is null)
+                    bestV6 = s;
+            }
+        }
+
+        return bestV4 ?? bestV6 ?? "";
     }
 
     private async Task AutoQualityLoopAsync(CancellationToken ct)

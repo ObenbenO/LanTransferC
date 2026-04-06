@@ -86,6 +86,7 @@ public sealed class ControlServerHost : IAsyncDisposable
                 webBuilder.ConfigureKestrel(kestrel =>
                 {
                     kestrel.Listen(IPAddress.Any, port, lo => { lo.Protocols = HttpProtocols.Http2; });
+                    kestrel.Listen(IPAddress.IPv6Any, port, lo => { lo.Protocols = HttpProtocols.Http2; });
                 });
 
                 webBuilder.ConfigureServices(services =>
