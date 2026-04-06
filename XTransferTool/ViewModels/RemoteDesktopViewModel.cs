@@ -88,6 +88,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private int _pendingWheelX;
 
     private int _e2eEmaMs;
+    private int _e2eMinMs;
+    private long _e2eMinUpdatedAtMs;
     private int _qualityTier;
     private long _lastQualityChangeMs;
 
@@ -189,6 +191,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
             _qualityTier = (int)QualityTier.Clear;
             _e2eEmaMs = 0;
+            _e2eMinMs = 0;
+            _e2eMinUpdatedAtMs = 0;
             _lastQualityChangeMs = 0;
 
             await StartVideoAsync((QualityTier)_qualityTier, _streamCts.Token);
@@ -260,6 +264,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         _remotePort = 0;
         _localId = null;
         _e2eEmaMs = 0;
+            _e2eMinMs = 0;
+            _e2eMinUpdatedAtMs = 0;
         _qualityTier = 0;
         _lastQualityChangeMs = 0;
 
@@ -714,9 +720,20 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 Status = "已连接";
 
                 var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var e2e = (int)Math.Clamp(nowMs - chunk.TsMs, 0, 5000);
+                var e2eRaw = (int)Math.Clamp(nowMs - chunk.TsMs, 0, 30_000);
+                var min = Volatile.Read(ref _e2eMinMs);
+                var minAt = Volatile.Read(ref _e2eMinUpdatedAtMs);
+
+                if (min == 0 || e2eRaw < min || nowMs - minAt > 5000)
+                {
+                    Volatile.Write(ref _e2eMinMs, e2eRaw);
+                    Volatile.Write(ref _e2eMinUpdatedAtMs, nowMs);
+                    min = e2eRaw;
+                }
+
+                var e2eExcess = Math.Max(0, e2eRaw - min);
                 var prev = Volatile.Read(ref _e2eEmaMs);
-                var ema = prev == 0 ? e2e : (prev * 9 + e2e) / 10;
+                var ema = prev == 0 ? e2eExcess : (prev * 9 + e2eExcess) / 10;
                 Volatile.Write(ref _e2eEmaMs, ema);
                 Latency = $"{ema} ms";
 
