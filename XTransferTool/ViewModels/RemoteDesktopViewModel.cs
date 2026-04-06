@@ -92,6 +92,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private long _e2eMinUpdatedAtMs;
     private int _qualityTier;
     private long _lastQualityChangeMs;
+    private int _videoGeneration;
+    private long _lastResyncMs;
 
     private enum QualityTier
     {
@@ -194,6 +196,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             _e2eMinMs = 0;
             _e2eMinUpdatedAtMs = 0;
             _lastQualityChangeMs = 0;
+            _lastResyncMs = 0;
+            _videoGeneration = 0;
 
             await StartVideoAsync((QualityTier)_qualityTier, _streamCts.Token);
             _autoQualityTask = Task.Run(() => AutoQualityLoopAsync(_streamCts.Token), _streamCts.Token);
@@ -264,10 +268,12 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         _remotePort = 0;
         _localId = null;
         _e2eEmaMs = 0;
-            _e2eMinMs = 0;
-            _e2eMinUpdatedAtMs = 0;
+        _e2eMinMs = 0;
+        _e2eMinUpdatedAtMs = 0;
         _qualityTier = 0;
         _lastQualityChangeMs = 0;
+        _lastResyncMs = 0;
+        _videoGeneration = 0;
 
         var pending = Interlocked.Exchange(ref _pendingFrame, null);
         if (pending is not null)
@@ -584,11 +590,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             return;
 
         _videoCts?.Cancel();
-        var oldTask = _videoTask;
-        if (oldTask is not null)
-        {
-            try { await oldTask; } catch { }
-        }
+        var gen = Interlocked.Increment(ref _videoGeneration);
         _videoCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = _videoCts.Token;
 
@@ -615,7 +617,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             QualityPreset = preset
         }, cancellationToken: token);
 
-        _videoTask = Task.Run(() => ConsumeHevcAsync(call, token), token);
+        _videoTask = Task.Run(() => ConsumeHevcAsync(call, token, gen), token);
         await Task.CompletedTask;
     }
 
@@ -624,12 +626,18 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000));
         var lowStable = 0;
         var highStable = 0;
+        var resyncStable = 0;
 
         while (await timer.WaitForNextTickAsync(ct))
         {
             var ema = Volatile.Read(ref _e2eEmaMs);
             if (ema <= 0)
                 continue;
+
+            if (ema >= 900)
+                resyncStable++;
+            else
+                resyncStable = 0;
 
             if (ema >= 320)
             {
@@ -649,8 +657,18 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var sinceChange = now - Volatile.Read(ref _lastQualityChangeMs);
+            var sinceResync = now - Volatile.Read(ref _lastResyncMs);
 
             var current = (QualityTier)Volatile.Read(ref _qualityTier);
+            if (resyncStable >= 2 && sinceResync >= 5000)
+            {
+                Volatile.Write(ref _lastResyncMs, now);
+                Status = "自适应重同步";
+                await StartVideoAsync(current, ct);
+                resyncStable = 0;
+                continue;
+            }
+
             if (highStable >= 2 && sinceChange >= 4000)
             {
                 if (current > QualityTier.Smooth)
@@ -679,7 +697,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
     }
 
-    private async Task ConsumeHevcAsync(AsyncServerStreamingCall<HevcStreamChunk> call, CancellationToken ct)
+    private async Task ConsumeHevcAsync(AsyncServerStreamingCall<HevcStreamChunk> call, CancellationToken ct, int gen)
     {
         long bytesInWindow = 0;
         var windowStart = Stopwatch.StartNew();
@@ -687,8 +705,14 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
         try
         {
+            if (gen != Volatile.Read(ref _videoGeneration))
+                return;
+
             while (await call.ResponseStream.MoveNext(ct))
             {
+                if (gen != Volatile.Read(ref _videoGeneration))
+                    return;
+
                 var chunk = call.ResponseStream.Current;
                 if (chunk is null)
                     continue;
@@ -863,16 +887,20 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         if (cts is null)
             return true;
 
-        _ = Task.Run(() => DecodeLoopAsync(fb, width, height, _decoderOut!, cts.Token), cts.Token);
+        var gen = Volatile.Read(ref _videoGeneration);
+        _ = Task.Run(() => DecodeLoopAsync(fb, width, height, _decoderOut!, cts.Token, gen), cts.Token);
         return true;
     }
 
-    private async Task DecodeLoopAsync(WriteableBitmap bitmap, int width, int height, Stream src, CancellationToken ct)
+    private async Task DecodeLoopAsync(WriteableBitmap bitmap, int width, int height, Stream src, CancellationToken ct, int gen)
     {
         try
         {
             while (!ct.IsCancellationRequested)
             {
+                if (gen != Volatile.Read(ref _videoGeneration))
+                    return;
+
                 var frameSize = _decoderFrameSize;
                 if (frameSize <= 0)
                     return;

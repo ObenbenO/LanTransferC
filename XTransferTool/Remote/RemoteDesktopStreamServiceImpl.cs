@@ -411,7 +411,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
                 $"-hide_banner -loglevel error " +
                 $"-fflags nobuffer -flags low_delay " +
                 $"-f rawvideo -pix_fmt bgra -video_size {width}x{height} -framerate {fps} -i pipe:0 " +
-                $"{encoder} {preset} {bitrate} -bf 0 -g {Math.Max(1, fps * 2)} -pix_fmt yuv420p " +
+                $"{encoder} {preset} {bitrate} -bf 0 -g {Math.Max(1, fps)} -sc_threshold 0 -pix_fmt yuv420p " +
                 $"-f {outFmt} pipe:1";
 
             var psi = new ProcessStartInfo
