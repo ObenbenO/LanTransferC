@@ -768,7 +768,17 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
         try { _decoder?.Dispose(); } catch { }
 
-        _sessionId = null;
+        _decoder = null;
+        _decoderIn = null;
+        _decoderOut = null;
+        _streamCodec = null;
+        _decoderFrameSize = 0;
+
+        var pending = Interlocked.Exchange(ref _pendingFrame, null);
+        if (pending is not null)
+            ArrayPool<byte>.Shared.Return(pending);
+        Interlocked.Exchange(ref _uiBlitScheduled, 0);
+
         Frame = null;
     }
 
