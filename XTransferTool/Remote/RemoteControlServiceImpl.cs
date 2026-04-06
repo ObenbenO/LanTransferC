@@ -373,8 +373,8 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
         {
             reason = "";
 
-            var dy = Math.Clamp(deltaY, -10, 10) * WHEEL_DELTA;
-            var dx = Math.Clamp(deltaX, -10, 10) * WHEEL_DELTA;
+            var dy = Math.Clamp(deltaY, -1200, 1200);
+            var dx = Math.Clamp(deltaX, -1200, 1200);
 
             if (dy != 0)
             {
@@ -518,4 +518,3 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
         };
     }
 }
-

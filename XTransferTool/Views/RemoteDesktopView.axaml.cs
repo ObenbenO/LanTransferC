@@ -13,6 +13,8 @@ public partial class RemoteDesktopView : UserControl
     private bool _hasLastPos;
     private int _lastX;
     private int _lastY;
+    private double _wheelAccY;
+    private double _wheelAccX;
 
     public RemoteDesktopView()
     {
@@ -258,9 +260,18 @@ public partial class RemoteDesktopView : UserControl
         _lastX = rx;
         _lastY = ry;
 
-        var dy = (int)Math.Round(e.Delta.Y);
-        var dx = (int)Math.Round(e.Delta.X);
-        vm.SendMouseWheel(rx, ry, dy, dx);
+        vm.SendMouseMove(rx, ry);
+
+        _wheelAccY += e.Delta.Y * 120.0;
+        _wheelAccX += e.Delta.X * 120.0;
+
+        var dy = (int)Math.Truncate(_wheelAccY);
+        var dx = (int)Math.Truncate(_wheelAccX);
+        _wheelAccY -= dy;
+        _wheelAccX -= dx;
+
+        if (dy != 0 || dx != 0)
+            vm.SendMouseWheel(rx, ry, dy, dx);
         e.Handled = true;
     }
 

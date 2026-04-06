@@ -78,6 +78,8 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private int _hasPendingMouseMove;
     private int _lastSentMouseX;
     private int _lastSentMouseY;
+    private int _pendingWheelY;
+    private int _pendingWheelX;
 
     public RemoteDesktopViewModel(IPeerDirectory? directory = null, SettingsStore? settings = null, int? localControlPort = null)
     {
@@ -293,20 +295,11 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(_sessionId))
             return;
 
-        SendMouseMoveImmediate(x, y);
+        if (deltaY == 0 && deltaX == 0)
+            return;
 
-        var payload = new byte[8];
-        BitConverter.GetBytes(deltaY).CopyTo(payload, 0);
-        BitConverter.GetBytes(deltaX).CopyTo(payload, 4);
-
-        Enqueue(new RemoteInputEvent
-        {
-            SessionId = _sessionId,
-            Seq = Interlocked.Increment(ref _inputSeq),
-            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Type = "mouseWheel",
-            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
-        });
+        Interlocked.Add(ref _pendingWheelY, deltaY);
+        Interlocked.Add(ref _pendingWheelX, deltaX);
     }
 
     public void SendKeyDown(int windowsVk)
@@ -436,25 +429,49 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         _hasPendingMouseMove = 0;
         _lastSentMouseX = 0;
         _lastSentMouseY = 0;
+        _pendingWheelY = 0;
+        _pendingWheelX = 0;
 
         _ = Task.Run(async () =>
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
             while (await timer.WaitForNextTickAsync(token))
             {
-                if (Volatile.Read(ref _hasPendingMouseMove) == 0)
-                    continue;
+                if (Volatile.Read(ref _hasPendingMouseMove) != 0)
+                {
+                    var x = Volatile.Read(ref _pendingMouseX);
+                    var y = Volatile.Read(ref _pendingMouseY);
+                    Volatile.Write(ref _hasPendingMouseMove, 0);
 
-                var x = Volatile.Read(ref _pendingMouseX);
-                var y = Volatile.Read(ref _pendingMouseY);
-                Volatile.Write(ref _hasPendingMouseMove, 0);
+                    if (x != _lastSentMouseX || y != _lastSentMouseY)
+                        SendMouseMoveImmediate(x, y);
+                }
 
-                if (x == _lastSentMouseX && y == _lastSentMouseY)
-                    continue;
-
-                SendMouseMoveImmediate(x, y);
+                var wy = Interlocked.Exchange(ref _pendingWheelY, 0);
+                var wx = Interlocked.Exchange(ref _pendingWheelX, 0);
+                if (wy != 0 || wx != 0)
+                    SendMouseWheelImmediate(wy, wx);
             }
         }, token);
+    }
+
+    private void SendMouseWheelImmediate(int wheelDataY, int wheelDataX)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+
+        var payload = new byte[8];
+        BitConverter.GetBytes(wheelDataY).CopyTo(payload, 0);
+        BitConverter.GetBytes(wheelDataX).CopyTo(payload, 4);
+
+        Enqueue(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = "mouseWheel",
+            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
+        });
     }
 
     private void SendKey(int windowsVk, bool isDown)
