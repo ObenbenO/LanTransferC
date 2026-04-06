@@ -60,7 +60,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
                         Data = ByteString.CopyFrom(buf, 0, n),
                         Width = width,
                         Height = height,
-                        Codec = "hevc"
+                        Codec = encoder.Codec
                     }, context.CancellationToken);
                 }
 
@@ -289,13 +289,16 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
     {
         private readonly Process _proc;
         private readonly Task<string> _stderrTask;
+        private readonly string _codec;
 
         public Stream Stdin { get; }
         public Stream Stdout { get; }
+        public string Codec => _codec;
 
-        private FfmpegHevcEncoder(Process proc)
+        private FfmpegHevcEncoder(Process proc, string codec)
         {
             _proc = proc;
+            _codec = codec;
             Stdin = proc.StandardInput.BaseStream;
             Stdout = proc.StandardOutput.BaseStream;
             _stderrTask = Task.Run(async () =>
@@ -308,13 +311,15 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         {
             var encoder = ChooseEncoder();
             var (bitrate, preset) = QualityToParams(qualityPreset, encoder);
+            var outFmt = InferOutputFormat(encoder);
+            var codec = outFmt == "hevc" ? "hevc" : "h264";
 
             var args =
                 $"-hide_banner -loglevel error " +
                 $"-fflags nobuffer -flags low_delay " +
                 $"-f rawvideo -pix_fmt bgra -video_size {width}x{height} -framerate {fps} -i pipe:0 " +
                 $"{encoder} {preset} {bitrate} -bf 0 -g {Math.Max(1, fps * 2)} -pix_fmt yuv420p " +
-                $"-f hevc pipe:1";
+                $"-f {outFmt} pipe:1";
 
             var psi = new ProcessStartInfo
             {
@@ -339,17 +344,22 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             if (proc is null)
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "ffmpeg 启动失败"));
 
-            return new FfmpegHevcEncoder(proc);
+            return new FfmpegHevcEncoder(proc, codec);
         }
 
         private static string ChooseEncoder()
         {
             if (OperatingSystem.IsWindows())
-                return HasNvidiaCudaDriver() ? "-c:v hevc_nvenc" : "-c:v libx265";
+                return HasNvidiaCudaDriver() ? "-c:v h264_nvenc" : "-c:v libx264";
             if (OperatingSystem.IsMacOS())
-                return "-c:v hevc_videotoolbox";
-            return "-c:v libx265";
+                return "-c:v h264_videotoolbox";
+            return "-c:v libx264";
         }
+
+        private static string InferOutputFormat(string encoder) =>
+            encoder.Contains("265", StringComparison.OrdinalIgnoreCase) || encoder.Contains("hevc", StringComparison.OrdinalIgnoreCase)
+                ? "hevc"
+                : "h264";
 
         private static bool HasNvidiaCudaDriver()
         {
@@ -369,6 +379,16 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         private static (string Bitrate, string Preset) QualityToParams(string qualityPreset, string encoder)
         {
             var p = (qualityPreset ?? "").Trim().ToLowerInvariant();
+
+            if (encoder.Contains("libx264", StringComparison.OrdinalIgnoreCase))
+            {
+                return p switch
+                {
+                    "clear" or "清晰" => ("-b:v 10M -maxrate 14M -bufsize 20M", "-preset fast -tune zerolatency"),
+                    "balanced" or "平衡" => ("-b:v 7M -maxrate 9M -bufsize 14M", "-preset veryfast -tune zerolatency"),
+                    _ => ("-b:v 4M -maxrate 6M -bufsize 8M", "-preset ultrafast -tune zerolatency")
+                };
+            }
 
             if (encoder.Contains("libx265", StringComparison.OrdinalIgnoreCase))
             {

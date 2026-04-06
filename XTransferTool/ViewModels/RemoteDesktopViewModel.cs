@@ -13,6 +13,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.Input;
 using System.Text;
+using System.Buffers;
 using XTransferTool.Config;
 using XTransferTool.Discovery;
 using XTransferTool.Control.Proto;
@@ -63,6 +64,16 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private Stream? _decoderIn;
     private Stream? _decoderOut;
     private string? _sessionId;
+    private string? _streamCodec;
+    private int _decoderFrameSize;
+    private byte[]? _pendingFrame;
+    private int _uiBlitScheduled;
+    private CancellationTokenSource? _mouseMoveCts;
+    private int _pendingMouseX;
+    private int _pendingMouseY;
+    private int _hasPendingMouseMove;
+    private int _lastSentMouseX;
+    private int _lastSentMouseY;
 
     public RemoteDesktopViewModel(IPeerDirectory? directory = null, SettingsStore? settings = null, int? localControlPort = null)
     {
@@ -108,9 +119,10 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             if (string.IsNullOrWhiteSpace(localId))
                 localId = "local";
 
-            var channel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
-            var control = new RemoteControlService.RemoteControlServiceClient(channel);
-            var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(channel);
+            var controlChannel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
+            var streamChannel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
+            var control = new RemoteControlService.RemoteControlServiceClient(controlChannel);
+            var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(streamChannel);
 
             var create = await control.CreateSessionAsync(new CreateRemoteSessionRequest
             {
@@ -124,6 +136,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
             _inputCall = control.InputStream(cancellationToken: _streamCts.Token);
             _ = DrainAcksAsync(_inputCall, _streamCts.Token);
+            StartMouseMovePump(_streamCts.Token);
 
             var stats = control.SubscribeStats(new SubscribeRemoteStatsRequest
             {
@@ -151,7 +164,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             {
                 SessionId = _sessionId,
                 FromId = localId,
-                TargetFps = 30,
+                TargetFps = 60,
                 MaxResolution = "1920x1080",
                 QualityPreset = "smooth"
             }, cancellationToken: _streamCts.Token);
@@ -189,6 +202,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     {
         _statsCts?.Cancel();
         _streamCts?.Cancel();
+        _mouseMoveCts?.Cancel();
 
         try
         {
@@ -216,6 +230,14 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         _decoderIn = null;
         _decoderOut = null;
         _sessionId = null;
+        _streamCodec = null;
+        _decoderFrameSize = 0;
+
+        var pending = Interlocked.Exchange(ref _pendingFrame, null);
+        if (pending is not null)
+            ArrayPool<byte>.Shared.Return(pending);
+        Interlocked.Exchange(ref _uiBlitScheduled, 0);
+
         Frame = null;
         RemoteWidth = 0;
         RemoteHeight = 0;
@@ -233,35 +255,22 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     public void SendMouseMove(int x, int y)
     {
-        var call = _inputCall;
-        if (call is null)
+        if (_inputCall is null || string.IsNullOrWhiteSpace(_sessionId))
             return;
-        if (string.IsNullOrWhiteSpace(_sessionId))
-            return;
-
-        var payload = new byte[8];
-        BitConverter.GetBytes(x).CopyTo(payload, 0);
-        BitConverter.GetBytes(y).CopyTo(payload, 4);
-
-        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
-        {
-            SessionId = _sessionId,
-            Seq = Interlocked.Increment(ref _inputSeq),
-            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Type = "mouseMove",
-            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
-        });
+        Volatile.Write(ref _pendingMouseX, x);
+        Volatile.Write(ref _pendingMouseY, y);
+        Volatile.Write(ref _hasPendingMouseMove, 1);
     }
 
     public void SendMouseDown(int x, int y, byte button)
     {
-        SendMouseMove(x, y);
+        SendMouseMoveImmediate(x, y);
         SendMouseButton(button, isDown: true);
     }
 
     public void SendMouseUp(int x, int y, byte button)
     {
-        SendMouseMove(x, y);
+        SendMouseMoveImmediate(x, y);
         SendMouseButton(button, isDown: false);
     }
 
@@ -312,6 +321,61 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             Type = isDown ? "mouseDown" : "mouseUp",
             Payload = Google.Protobuf.ByteString.CopyFrom([button])
         });
+    }
+
+    private void SendMouseMoveImmediate(int x, int y)
+    {
+        var call = _inputCall;
+        if (call is null)
+            return;
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+
+        var payload = new byte[8];
+        BitConverter.GetBytes(x).CopyTo(payload, 0);
+        BitConverter.GetBytes(y).CopyTo(payload, 4);
+
+        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = "mouseMove",
+            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
+        });
+
+        _lastSentMouseX = x;
+        _lastSentMouseY = y;
+    }
+
+    private void StartMouseMovePump(CancellationToken ct)
+    {
+        _mouseMoveCts?.Cancel();
+        _mouseMoveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = _mouseMoveCts.Token;
+
+        _hasPendingMouseMove = 0;
+        _lastSentMouseX = 0;
+        _lastSentMouseY = 0;
+
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                if (Volatile.Read(ref _hasPendingMouseMove) == 0)
+                    continue;
+
+                var x = Volatile.Read(ref _pendingMouseX);
+                var y = Volatile.Read(ref _pendingMouseY);
+                Volatile.Write(ref _hasPendingMouseMove, 0);
+
+                if (x == _lastSentMouseX && y == _lastSentMouseY)
+                    continue;
+
+                SendMouseMoveImmediate(x, y);
+            }
+        }, token);
     }
 
     private void SendKey(int windowsVk, bool isDown)
@@ -420,18 +484,19 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 {
                     RemoteWidth = chunk.Width;
                     RemoteHeight = chunk.Height;
-                    if (!TryStartDecoder(RemoteWidth, RemoteHeight, out var err))
+                    _streamCodec = string.IsNullOrWhiteSpace(chunk.Codec) ? "h264" : chunk.Codec.Trim().ToLowerInvariant();
+                    if (!TryStartDecoder(RemoteWidth, RemoteHeight, _streamCodec, out var err))
                     {
                         Status = err;
                         return;
                     }
                 }
 
-                var data = chunk.Data.ToByteArray();
-                bytesInWindow += data.Length;
                 try
                 {
-                    await _decoderIn!.WriteAsync(data, 0, data.Length, ct);
+                    var mem = chunk.Data.Memory;
+                    bytesInWindow += mem.Length;
+                    await _decoderIn!.WriteAsync(mem, ct);
                 }
                 catch (Exception ex)
                 {
@@ -476,14 +541,23 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private bool TryStartDecoder(int width, int height, out string error)
     {
+        return TryStartDecoder(width, height, "h264", out error);
+    }
+
+    private bool TryStartDecoder(int width, int height, string codec, out string error)
+    {
         error = "";
         if (_decoder is not null)
             return true;
 
+        var c = (codec ?? "").Trim().ToLowerInvariant();
+        var fmt = c is "hevc" or "h265" ? "hevc" : "h264";
+
         var args =
             "-hide_banner -loglevel error " +
             "-fflags nobuffer -flags low_delay " +
-            "-f hevc -i pipe:0 " +
+            "-probesize 32 -analyzeduration 0 " +
+            $"-f {fmt} -i pipe:0 " +
             "-f rawvideo -pix_fmt bgra pipe:1";
 
         var psi = new ProcessStartInfo
@@ -523,6 +597,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             AlphaFormat.Unpremul);
 
         Frame = fb;
+        _decoderFrameSize = width * height * 4;
 
         var cts = _streamCts;
         if (cts is null)
@@ -534,36 +609,33 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private async Task DecodeLoopAsync(WriteableBitmap bitmap, int width, int height, Stream src, CancellationToken ct)
     {
-        var frameSize = width * height * 4;
-        var buf = new byte[frameSize];
-        var sw = Stopwatch.StartNew();
-        var frames = 0;
-
         try
         {
             while (!ct.IsCancellationRequested)
             {
+                var frameSize = _decoderFrameSize;
+                if (frameSize <= 0)
+                    return;
+
+                var frame = ArrayPool<byte>.Shared.Rent(frameSize);
                 var read = 0;
                 while (read < frameSize)
                 {
-                    var n = await src.ReadAsync(buf, read, frameSize - read, ct);
+                    var n = await src.ReadAsync(frame.AsMemory(read, frameSize - read), ct);
                     if (n <= 0)
+                    {
+                        ArrayPool<byte>.Shared.Return(frame);
                         return;
+                    }
                     read += n;
                 }
 
-                var copy = new byte[frameSize];
-                Buffer.BlockCopy(buf, 0, copy, 0, frameSize);
-                frames++;
+                var prev = Interlocked.Exchange(ref _pendingFrame, frame);
+                if (prev is not null)
+                    ArrayPool<byte>.Shared.Return(prev);
 
-                if (sw.ElapsedMilliseconds >= 1000)
-                {
-                    Fps = $"{frames:0} fps";
-                    frames = 0;
-                    sw.Restart();
-                }
-
-                _ = Dispatcher.UIThread.InvokeAsync(() => Blit(bitmap, width, height, copy));
+                if (Interlocked.Exchange(ref _uiBlitScheduled, 1) == 0)
+                    _ = Dispatcher.UIThread.InvokeAsync(() => DrainPendingFrame(bitmap, width, height));
             }
         }
         catch (OperationCanceledException)
@@ -572,6 +644,26 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         catch
         {
         }
+    }
+
+    private void DrainPendingFrame(WriteableBitmap bitmap, int width, int height)
+    {
+        Interlocked.Exchange(ref _uiBlitScheduled, 0);
+        var frame = Interlocked.Exchange(ref _pendingFrame, null);
+        if (frame is null)
+            return;
+
+        try
+        {
+            Blit(bitmap, width, height, frame);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(frame);
+        }
+
+        if (_pendingFrame is not null && Interlocked.Exchange(ref _uiBlitScheduled, 1) == 0)
+            _ = Dispatcher.UIThread.InvokeAsync(() => DrainPendingFrame(bitmap, width, height));
     }
 
     private static unsafe void Blit(WriteableBitmap bitmap, int width, int height, byte[] frame)
