@@ -55,11 +55,15 @@
                    Stretch="Uniform"
                    HorizontalAlignment="Stretch"
                    VerticalAlignment="Stretch"
+                   Focusable="True"
                    PointerMoved="RemoteImage_PointerMoved"
                    PointerPressed="RemoteImage_PointerPressed"
                    PointerReleased="RemoteImage_PointerReleased"
                    PointerCaptureLost="RemoteImage_PointerCaptureLost"
-                   PointerExited="RemoteImage_PointerExited"/>
+                   PointerExited="RemoteImage_PointerExited"
+                   KeyDown="RemoteImage_KeyDown"
+                   KeyUp="RemoteImage_KeyUp"
+                   TextInput="RemoteImage_TextInput"/>
 
             <!-- Control bar (fake) -->
             <Border HorizontalAlignment="Center"

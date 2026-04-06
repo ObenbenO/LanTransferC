@@ -31,12 +31,37 @@ public partial class RemoteDesktopView : UserControl
 
         var p = e.GetPosition(c);
         if (!TryMapToRemotePixels(c.Bounds, p, vm.RemoteWidth, vm.RemoteHeight, clampOutside: false, out var rx, out var ry))
+        {
+            var props0 = e.GetCurrentPoint(c).Properties;
+            if (_leftDown && !props0.IsLeftButtonPressed && _hasLastPos)
+            {
+                _leftDown = false;
+                vm.SendMouseUp(_lastX, _lastY, button: 0);
+            }
+            if (_rightDown && !props0.IsRightButtonPressed && _hasLastPos)
+            {
+                _rightDown = false;
+                vm.SendMouseUp(_lastX, _lastY, button: 1);
+            }
             return;
+        }
 
         _hasLastPos = true;
         _lastX = rx;
         _lastY = ry;
         vm.SendMouseMove(rx, ry);
+
+        var props = e.GetCurrentPoint(c).Properties;
+        if (_leftDown && !props.IsLeftButtonPressed)
+        {
+            _leftDown = false;
+            vm.SendMouseUp(rx, ry, button: 0);
+        }
+        if (_rightDown && !props.IsRightButtonPressed)
+        {
+            _rightDown = false;
+            vm.SendMouseUp(rx, ry, button: 1);
+        }
     }
 
     private void RemoteImage_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -57,7 +82,19 @@ public partial class RemoteDesktopView : UserControl
         _lastX = rx;
         _lastY = ry;
 
+        c.Focus();
         var props = e.GetCurrentPoint(c).Properties;
+        if (_leftDown && !props.IsLeftButtonPressed)
+        {
+            _leftDown = false;
+            vm.SendMouseUp(rx, ry, button: 0);
+        }
+        if (_rightDown && !props.IsRightButtonPressed)
+        {
+            _rightDown = false;
+            vm.SendMouseUp(rx, ry, button: 1);
+        }
+
         if (props.IsLeftButtonPressed)
         {
             _leftDown = true;
@@ -155,6 +192,43 @@ public partial class RemoteDesktopView : UserControl
             _rightDown = false;
             vm.SendMouseUp(_lastX, _lastY, button: 1);
         }
+    }
+
+    private void RemoteImage_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not RemoteDesktopViewModel vm)
+            return;
+
+        var vk = RemoteDesktopViewModel.TryMapKeyToWindowsVk(e.Key);
+        if (vk.HasValue)
+        {
+            vm.SendKeyDown(vk.Value);
+            e.Handled = true;
+        }
+    }
+
+    private void RemoteImage_KeyUp(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not RemoteDesktopViewModel vm)
+            return;
+
+        var vk = RemoteDesktopViewModel.TryMapKeyToWindowsVk(e.Key);
+        if (vk.HasValue)
+        {
+            vm.SendKeyUp(vk.Value);
+            e.Handled = true;
+        }
+    }
+
+    private void RemoteImage_TextInput(object? sender, TextInputEventArgs e)
+    {
+        if (DataContext is not RemoteDesktopViewModel vm)
+            return;
+        if (string.IsNullOrEmpty(e.Text))
+            return;
+
+        vm.SendText(e.Text);
+        e.Handled = true;
     }
 
     private static bool TryMapToRemotePixels(Rect bounds, Point localPoint, int remoteW, int remoteH, bool clampOutside, out int x, out int y)

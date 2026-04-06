@@ -11,6 +11,8 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.Input;
+using System.Text;
 using XTransferTool.Config;
 using XTransferTool.Discovery;
 using XTransferTool.Control.Proto;
@@ -263,6 +265,37 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         SendMouseButton(button, isDown: false);
     }
 
+    public void SendKeyDown(int windowsVk)
+    {
+        SendKey(windowsVk, isDown: true);
+    }
+
+    public void SendKeyUp(int windowsVk)
+    {
+        SendKey(windowsVk, isDown: false);
+    }
+
+    public void SendText(string text)
+    {
+        var call = _inputCall;
+        if (call is null)
+            return;
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        var bytes = Encoding.UTF8.GetBytes(text);
+        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = "text",
+            Payload = Google.Protobuf.ByteString.CopyFrom(bytes)
+        });
+    }
+
     private void SendMouseButton(byte button, bool isDown)
     {
         var call = _inputCall;
@@ -279,6 +312,80 @@ public partial class RemoteDesktopViewModel : ViewModelBase
             Type = isDown ? "mouseDown" : "mouseUp",
             Payload = Google.Protobuf.ByteString.CopyFrom([button])
         });
+    }
+
+    private void SendKey(int windowsVk, bool isDown)
+    {
+        var call = _inputCall;
+        if (call is null)
+            return;
+        if (string.IsNullOrWhiteSpace(_sessionId))
+            return;
+        if (windowsVk <= 0 || windowsVk > 0xFF)
+            return;
+
+        var payload = new byte[4];
+        BitConverter.GetBytes(windowsVk).CopyTo(payload, 0);
+        _ = call.RequestStream.WriteAsync(new RemoteInputEvent
+        {
+            SessionId = _sessionId,
+            Seq = Interlocked.Increment(ref _inputSeq),
+            TsMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = isDown ? "keyDown" : "keyUp",
+            Payload = Google.Protobuf.ByteString.CopyFrom(payload)
+        });
+    }
+
+    public static int? TryMapKeyToWindowsVk(Key key)
+    {
+        if (key is Key.None)
+            return null;
+
+        if (key is >= Key.A and <= Key.Z)
+            return 'A' + (key - Key.A);
+
+        if (key is >= Key.D0 and <= Key.D9)
+            return '0' + (key - Key.D0);
+
+        return key switch
+        {
+            Key.Space => 0x20,
+            Key.Enter => 0x0D,
+            Key.Tab => 0x09,
+            Key.Back => 0x08,
+            Key.Escape => 0x1B,
+            Key.Left => 0x25,
+            Key.Up => 0x26,
+            Key.Right => 0x27,
+            Key.Down => 0x28,
+            Key.Delete => 0x2E,
+            Key.Insert => 0x2D,
+            Key.Home => 0x24,
+            Key.End => 0x23,
+            Key.PageUp => 0x21,
+            Key.PageDown => 0x22,
+            Key.LeftShift => 0xA0,
+            Key.RightShift => 0xA1,
+            Key.LeftCtrl => 0xA2,
+            Key.RightCtrl => 0xA3,
+            Key.LeftAlt => 0xA4,
+            Key.RightAlt => 0xA5,
+            Key.LWin => 0x5B,
+            Key.RWin => 0x5C,
+            Key.F1 => 0x70,
+            Key.F2 => 0x71,
+            Key.F3 => 0x72,
+            Key.F4 => 0x73,
+            Key.F5 => 0x74,
+            Key.F6 => 0x75,
+            Key.F7 => 0x76,
+            Key.F8 => 0x77,
+            Key.F9 => 0x78,
+            Key.F10 => 0x79,
+            Key.F11 => 0x7A,
+            Key.F12 => 0x7B,
+            _ => null
+        };
     }
 
     private static async Task DrainAcksAsync(AsyncDuplexStreamingCall<RemoteInputEvent, RemoteInputAck> call, CancellationToken ct)

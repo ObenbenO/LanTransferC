@@ -167,6 +167,42 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
                 return WindowsSendInput.MouseButton(button, isDown: false, out reason);
             }
 
+            if (type.Equals("keyDown", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.Length < 4)
+                {
+                    reason = "payload too small";
+                    return false;
+                }
+
+                var vk = BitConverter.ToInt32(payload.Slice(0, 4));
+                return WindowsSendInput.Key(vk, isDown: true, out reason);
+            }
+
+            if (type.Equals("keyUp", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.Length < 4)
+                {
+                    reason = "payload too small";
+                    return false;
+                }
+
+                var vk = BitConverter.ToInt32(payload.Slice(0, 4));
+                return WindowsSendInput.Key(vk, isDown: false, out reason);
+            }
+
+            if (type.Equals("text", StringComparison.OrdinalIgnoreCase))
+            {
+                var text = System.Text.Encoding.UTF8.GetString(payload);
+                if (text.Length == 0)
+                {
+                    reason = "empty text";
+                    return false;
+                }
+
+                return WindowsSendInput.Text(text, out reason);
+            }
+
             reason = "unsupported type";
             return false;
         }
@@ -175,6 +211,7 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
     private static class WindowsSendInput
     {
         private const int INPUT_MOUSE = 0;
+        private const int INPUT_KEYBOARD = 1;
         private const uint MOUSEEVENTF_MOVE = 0x0001;
         private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
         private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
@@ -182,6 +219,9 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
         private const uint MOUSEEVENTF_LEFTUP = 0x0004;
         private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
         private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+        private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_UNICODE = 0x0004;
 
         private const int SM_CXVIRTUALSCREEN = 78;
         private const int SM_CYVIRTUALSCREEN = 79;
@@ -192,7 +232,16 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
         private struct INPUT
         {
             public int type;
+            public INPUTUNION u;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct INPUTUNION
+        {
+            [FieldOffset(0)]
             public MOUSEINPUT mi;
+            [FieldOffset(0)]
+            public KEYBDINPUT ki;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -201,6 +250,16 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
             public int dx;
             public int dy;
             public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk;
+            public ushort wScan;
             public uint dwFlags;
             public uint time;
             public IntPtr dwExtraInfo;
@@ -234,14 +293,17 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
             var input = new INPUT
             {
                 type = INPUT_MOUSE,
-                mi = new MOUSEINPUT
+                u = new INPUTUNION
                 {
-                    dx = absX,
-                    dy = absY,
-                    mouseData = 0,
-                    dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                    time = 0,
-                    dwExtraInfo = IntPtr.Zero
+                    mi = new MOUSEINPUT
+                    {
+                        dx = absX,
+                        dy = absY,
+                        mouseData = 0,
+                        dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
                 }
             };
 
@@ -267,14 +329,17 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
             var input = new INPUT
             {
                 type = INPUT_MOUSE,
-                mi = new MOUSEINPUT
+                u = new INPUTUNION
                 {
-                    dx = 0,
-                    dy = 0,
-                    mouseData = 0,
-                    dwFlags = flag,
-                    time = 0,
-                    dwExtraInfo = IntPtr.Zero
+                    mi = new MOUSEINPUT
+                    {
+                        dx = 0,
+                        dy = 0,
+                        mouseData = 0,
+                        dwFlags = flag,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
                 }
             };
 
@@ -287,6 +352,102 @@ public sealed class RemoteControlServiceImpl : RemoteControlService.RemoteContro
 
             return true;
         }
+
+        public static bool Key(int vk, bool isDown, out string reason)
+        {
+            reason = "";
+            if (vk <= 0 || vk > 0xFF)
+            {
+                reason = "bad vk";
+                return false;
+            }
+
+            var flags = isDown ? 0u : KEYEVENTF_KEYUP;
+            if (IsExtendedKey(vk))
+                flags |= KEYEVENTF_EXTENDEDKEY;
+
+            var input = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = (ushort)vk,
+                        wScan = 0,
+                        dwFlags = flags,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+
+            var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+            if (sent != 1)
+            {
+                reason = $"SendInput failed: {Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool Text(string text, out string reason)
+        {
+            reason = "";
+            try
+            {
+                foreach (var ch in text)
+                {
+                    if (!UnicodeChar(ch, isDown: true, out reason))
+                        return false;
+                    if (!UnicodeChar(ch, isDown: false, out reason))
+                        return false;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool UnicodeChar(char ch, bool isDown, out string reason)
+        {
+            reason = "";
+            var flags = KEYEVENTF_UNICODE | (isDown ? 0u : KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            var input = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = ch,
+                        dwFlags = flags,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+
+            var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+            if (sent != 1)
+            {
+                reason = $"SendInput failed: {Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsExtendedKey(int vk) => vk switch
+        {
+            0x21 or 0x22 or 0x23 or 0x24 or 0x25 or 0x26 or 0x27 or 0x28 or 0x2D or 0x2E => true,
+            _ => false
+        };
     }
 }
 
