@@ -291,15 +291,6 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         Status = "未连接";
     }
 
-    [RelayCommand]
-    private async Task SendDemoInput()
-    {
-        SendMouseMove(80, 80);
-        SendMouseDown(80, 80, button: 0);
-        await Task.Delay(40);
-        SendMouseUp(80, 80, button: 0);
-    }
-
     public void SendMouseMove(int x, int y)
     {
         if (_inputCall is null || string.IsNullOrWhiteSpace(_sessionId))

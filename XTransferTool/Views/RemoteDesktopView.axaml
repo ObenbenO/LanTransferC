@@ -75,21 +75,16 @@
                     Background="{DynamicResource CardBackgroundBrush}"
                     BorderBrush="{DynamicResource PanelBorderBrush}"
                     BorderThickness="1">
-              <StackPanel Orientation="Horizontal" Spacing="10">
-                <Button Content="连接" Command="{Binding ConnectCommand}" CornerRadius="10" Padding="12,6"/>
-                <Button Content="断开" Command="{Binding DisconnectCommand}" CornerRadius="10" Padding="12,6"/>
-                <Button Content="发送输入(演示)" Command="{Binding SendDemoInputCommand}" CornerRadius="10" Padding="12,6"/>
-                <ComboBox SelectedIndex="0" Width="110" Height="32">
-                  <ComboBoxItem Content="流畅"/>
-                  <ComboBoxItem Content="平衡"/>
-                  <ComboBoxItem Content="清晰"/>
-                </ComboBox>
-                <ComboBox SelectedIndex="0" Width="120" Height="32">
-                  <ComboBoxItem Content="原始分辨率"/>
-                  <ComboBoxItem Content="1080p"/>
-                  <ComboBoxItem Content="720p"/>
-                </ComboBox>
-              </StackPanel>
+              <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="12">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Content="连接" Command="{Binding ConnectCommand}" CornerRadius="10" Padding="12,6"/>
+                  <Button Content="断开" Command="{Binding DisconnectCommand}" CornerRadius="10" Padding="12,6"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                  <Button Content="⤢" Click="FullScreen_Click" CornerRadius="10" Padding="10,6"/>
+                  <Button Content="⤡" Click="Restore_Click" CornerRadius="10" Padding="10,6"/>
+                </StackPanel>
+              </Grid>
             </Border>
 
             <!-- HUD -->

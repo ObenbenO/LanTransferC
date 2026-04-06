@@ -13,10 +13,53 @@ public partial class RemoteDesktopView : UserControl
     private bool _hasLastPos;
     private int _lastX;
     private int _lastY;
+    private bool _hasRestoreBounds;
+    private WindowState _restoreState;
+    private PixelPoint _restorePosition;
+    private double _restoreWidth;
+    private double _restoreHeight;
 
     public RemoteDesktopView()
     {
         InitializeComponent();
+    }
+
+    private void FullScreen_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this) is not Window w)
+            return;
+
+        if (w.WindowState == WindowState.FullScreen)
+            return;
+
+        _restoreState = w.WindowState;
+        _restorePosition = w.Position;
+        _restoreWidth = w.Width;
+        _restoreHeight = w.Height;
+        _hasRestoreBounds = true;
+
+        w.WindowState = WindowState.FullScreen;
+    }
+
+    private void Restore_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this) is not Window w)
+            return;
+
+        if (w.WindowState != WindowState.FullScreen)
+            return;
+
+        w.WindowState = WindowState.Normal;
+
+        if (_hasRestoreBounds)
+        {
+            try { w.Position = _restorePosition; } catch { }
+            if (_restoreWidth > 0) w.Width = _restoreWidth;
+            if (_restoreHeight > 0) w.Height = _restoreHeight;
+
+            if (_restoreState == WindowState.Maximized)
+                w.WindowState = WindowState.Maximized;
+        }
     }
 
     private void RemoteImage_PointerMoved(object? sender, PointerEventArgs e)
