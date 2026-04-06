@@ -13,11 +13,13 @@ public partial class RemoteDesktopView : UserControl
     private bool _hasLastPos;
     private int _lastX;
     private int _lastY;
-    private bool _hasRestoreBounds;
-    private WindowState _restoreState;
-    private PixelPoint _restorePosition;
-    private double _restoreWidth;
-    private double _restoreHeight;
+    private bool _isCanvasFullscreen;
+    private GridLength _restoreLeftColWidth;
+    private GridLength _restoreHeaderRowHeight;
+    private Thickness _restoreRootMargin;
+    private Thickness _restoreCanvasMargin;
+    private CornerRadius _restoreRightCornerRadius;
+    private CornerRadius _restoreCanvasCornerRadius;
 
     public RemoteDesktopView()
     {
@@ -26,40 +28,55 @@ public partial class RemoteDesktopView : UserControl
 
     private void FullScreen_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (TopLevel.GetTopLevel(this) is not Window w)
+        if (_isCanvasFullscreen)
             return;
 
-        if (w.WindowState == WindowState.FullScreen)
-            return;
+        _restoreLeftColWidth = RootGrid.ColumnDefinitions[0].Width;
+        _restoreHeaderRowHeight = RootGrid.RowDefinitions[0].Height;
+        _restoreRootMargin = RootGrid.Margin;
+        _restoreCanvasMargin = CanvasBorder.Margin;
+        _restoreRightCornerRadius = RightPanel.CornerRadius;
+        _restoreCanvasCornerRadius = CanvasBorder.CornerRadius;
 
-        _restoreState = w.WindowState;
-        _restorePosition = w.Position;
-        _restoreWidth = w.Width;
-        _restoreHeight = w.Height;
-        _hasRestoreBounds = true;
+        HeaderPanel.IsVisible = false;
+        LeftPanel.IsVisible = false;
+        RootGrid.ColumnDefinitions[0].Width = new GridLength(0);
+        RootGrid.RowDefinitions[0].Height = new GridLength(0);
+        RootGrid.Margin = new Thickness(0);
+        RightPanel.CornerRadius = new CornerRadius(0);
+        CanvasBorder.Margin = new Thickness(0);
+        CanvasBorder.CornerRadius = new CornerRadius(0);
+        Grid.SetColumn(RightPanel, 0);
+        Grid.SetRow(RightPanel, 0);
+        Grid.SetColumnSpan(RightPanel, 2);
+        Grid.SetRowSpan(RightPanel, 2);
+        FullBtn.IsVisible = false;
+        RestoreBtn.IsVisible = true;
 
-        w.WindowState = WindowState.FullScreen;
+        _isCanvasFullscreen = true;
     }
 
     private void Restore_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (TopLevel.GetTopLevel(this) is not Window w)
+        if (!_isCanvasFullscreen)
             return;
 
-        if (w.WindowState != WindowState.FullScreen)
-            return;
+        Grid.SetColumn(RightPanel, 1);
+        Grid.SetRow(RightPanel, 1);
+        Grid.SetColumnSpan(RightPanel, 1);
+        Grid.SetRowSpan(RightPanel, 1);
+        RightPanel.CornerRadius = _restoreRightCornerRadius;
+        CanvasBorder.Margin = _restoreCanvasMargin;
+        CanvasBorder.CornerRadius = _restoreCanvasCornerRadius;
+        RootGrid.Margin = _restoreRootMargin;
+        RootGrid.ColumnDefinitions[0].Width = _restoreLeftColWidth;
+        RootGrid.RowDefinitions[0].Height = _restoreHeaderRowHeight;
+        HeaderPanel.IsVisible = true;
+        LeftPanel.IsVisible = true;
+        FullBtn.IsVisible = true;
+        RestoreBtn.IsVisible = false;
 
-        w.WindowState = WindowState.Normal;
-
-        if (_hasRestoreBounds)
-        {
-            try { w.Position = _restorePosition; } catch { }
-            if (_restoreWidth > 0) w.Width = _restoreWidth;
-            if (_restoreHeight > 0) w.Height = _restoreHeight;
-
-            if (_restoreState == WindowState.Maximized)
-                w.WindowState = WindowState.Maximized;
-        }
+        _isCanvasFullscreen = false;
     }
 
     private void RemoteImage_PointerMoved(object? sender, PointerEventArgs e)
