@@ -30,6 +30,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private readonly IPeerDirectory? _directory;
     private readonly SettingsStore? _settings;
     private readonly int? _localControlPort;
+    private string? _remoteAddress;
+    private int _remotePort;
+    private string? _localId;
 
     public ObservableCollection<RemoteDeviceItem> Devices { get; } = [];
 
@@ -59,6 +62,9 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
     private CancellationTokenSource? _statsCts;
     private CancellationTokenSource? _streamCts;
+    private CancellationTokenSource? _videoCts;
+    private Task? _videoTask;
+    private Task? _autoQualityTask;
     private long _inputSeq;
     private AsyncDuplexStreamingCall<RemoteInputEvent, RemoteInputAck>? _inputCall;
     private Channel<RemoteInputEvent>? _inputQueue;
@@ -80,6 +86,17 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     private int _lastSentMouseY;
     private int _pendingWheelY;
     private int _pendingWheelX;
+
+    private int _e2eEmaMs;
+    private int _qualityTier;
+    private long _lastQualityChangeMs;
+
+    private enum QualityTier
+    {
+        Smooth = 0,
+        Balanced = 1,
+        Clear = 2
+    }
 
     public RemoteDesktopViewModel(IPeerDirectory? directory = null, SettingsStore? settings = null, int? localControlPort = null)
     {
@@ -120,15 +137,16 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 Status = "设备地址为空";
                 return;
             }
+            _remoteAddress = address;
+            _remotePort = peer.ControlPort;
 
             var localId = _settings?.Current.Identity.DeviceId;
             if (string.IsNullOrWhiteSpace(localId))
                 localId = "local";
+            _localId = localId;
 
             var controlChannel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
-            var streamChannel = GrpcChannel.ForAddress($"http://{address}:{peer.ControlPort}");
             var control = new RemoteControlService.RemoteControlServiceClient(controlChannel);
-            var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(streamChannel);
 
             var create = await control.CreateSessionAsync(new CreateRemoteSessionRequest
             {
@@ -169,16 +187,12 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 catch (OperationCanceledException) { }
             }, _statsCts.Token);
 
-            var call = stream.SubscribeHevcStream(new SubscribeHevcStreamRequest
-            {
-                SessionId = _sessionId,
-                FromId = localId,
-                TargetFps = 60,
-                MaxResolution = "1920x1080",
-                QualityPreset = "smooth"
-            }, cancellationToken: _streamCts.Token);
+            _qualityTier = (int)QualityTier.Clear;
+            _e2eEmaMs = 0;
+            _lastQualityChangeMs = 0;
 
-            _ = Task.Run(() => ConsumeHevcAsync(call, _streamCts.Token), _streamCts.Token);
+            await StartVideoAsync((QualityTier)_qualityTier, _streamCts.Token);
+            _autoQualityTask = Task.Run(() => AutoQualityLoopAsync(_streamCts.Token), _streamCts.Token);
             _ = Task.Run(async () =>
             {
                 try
@@ -192,7 +206,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
 
                 if (_streamCts.IsCancellationRequested)
                     return;
-                if (RemoteWidth <= 0 || RemoteHeight <= 0)
+                if (Volatile.Read(ref _e2eEmaMs) <= 0)
                     Status = "连接超时：未收到视频流";
             }, _streamCts.Token);
         }
@@ -211,6 +225,7 @@ public partial class RemoteDesktopViewModel : ViewModelBase
     {
         _statsCts?.Cancel();
         _streamCts?.Cancel();
+        _videoCts?.Cancel();
         _mouseMoveCts?.Cancel();
         _inputSendCts?.Cancel();
 
@@ -226,28 +241,27 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         {
         }
 
-        try { _decoderIn?.Dispose(); } catch { }
-        try { _decoderOut?.Dispose(); } catch { }
-        try
-        {
-            if (_decoder is not null && !_decoder.HasExited)
-                _decoder.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-        }
-        try { _decoder?.Dispose(); } catch { }
+        ResetDecoder();
 
         _inputCall = null;
         _inputQueue = null;
         _inputSendCts = null;
         _inputSendLoop = null;
+        _videoCts = null;
+        _videoTask = null;
+        _autoQualityTask = null;
         _decoder = null;
         _decoderIn = null;
         _decoderOut = null;
         _sessionId = null;
         _streamCodec = null;
         _decoderFrameSize = 0;
+        _remoteAddress = null;
+        _remotePort = 0;
+        _localId = null;
+        _e2eEmaMs = 0;
+        _qualityTier = 0;
+        _lastQualityChangeMs = 0;
 
         var pending = Interlocked.Exchange(ref _pendingFrame, null);
         if (pending is not null)
@@ -558,6 +572,107 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         }
     }
 
+    private async Task StartVideoAsync(QualityTier tier, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionId) || string.IsNullOrWhiteSpace(_remoteAddress) || string.IsNullOrWhiteSpace(_localId) || _remotePort <= 0)
+            return;
+
+        _videoCts?.Cancel();
+        var oldTask = _videoTask;
+        if (oldTask is not null)
+        {
+            try { await oldTask; } catch { }
+        }
+        _videoCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = _videoCts.Token;
+
+        ResetDecoder();
+        RemoteWidth = 0;
+        RemoteHeight = 0;
+
+        var (preset, fps) = tier switch
+        {
+            QualityTier.Clear => ("clear", 60),
+            QualityTier.Balanced => ("balanced", 60),
+            _ => ("smooth", 45)
+        };
+
+        var streamChannel = GrpcChannel.ForAddress($"http://{_remoteAddress}:{_remotePort}");
+        var stream = new RemoteDesktopStreamService.RemoteDesktopStreamServiceClient(streamChannel);
+
+        var call = stream.SubscribeHevcStream(new SubscribeHevcStreamRequest
+        {
+            SessionId = _sessionId,
+            FromId = _localId,
+            TargetFps = fps,
+            MaxResolution = "1920x1080",
+            QualityPreset = preset
+        }, cancellationToken: token);
+
+        _videoTask = Task.Run(() => ConsumeHevcAsync(call, token), token);
+        await Task.CompletedTask;
+    }
+
+    private async Task AutoQualityLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(1000));
+        var lowStable = 0;
+        var highStable = 0;
+
+        while (await timer.WaitForNextTickAsync(ct))
+        {
+            var ema = Volatile.Read(ref _e2eEmaMs);
+            if (ema <= 0)
+                continue;
+
+            if (ema >= 320)
+            {
+                highStable++;
+                lowStable = 0;
+            }
+            else if (ema <= 160)
+            {
+                lowStable++;
+                highStable = 0;
+            }
+            else
+            {
+                lowStable = 0;
+                highStable = 0;
+            }
+
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var sinceChange = now - Volatile.Read(ref _lastQualityChangeMs);
+
+            var current = (QualityTier)Volatile.Read(ref _qualityTier);
+            if (highStable >= 2 && sinceChange >= 4000)
+            {
+                if (current > QualityTier.Smooth)
+                {
+                    var next = (QualityTier)((int)current - 1);
+                    Volatile.Write(ref _qualityTier, (int)next);
+                    Volatile.Write(ref _lastQualityChangeMs, now);
+                    Status = $"自适应降档：{next}";
+                    await StartVideoAsync(next, ct);
+                }
+                highStable = 0;
+            }
+
+            if (lowStable >= 8 && sinceChange >= 8000)
+            {
+                if (current < QualityTier.Clear)
+                {
+                    var next = (QualityTier)((int)current + 1);
+                    Volatile.Write(ref _qualityTier, (int)next);
+                    Volatile.Write(ref _lastQualityChangeMs, now);
+                    Status = $"自适应升档：{next}";
+                    await StartVideoAsync(next, ct);
+                }
+                lowStable = 0;
+            }
+        }
+    }
+
     private async Task ConsumeHevcAsync(AsyncServerStreamingCall<HevcStreamChunk> call, CancellationToken ct)
     {
         long bytesInWindow = 0;
@@ -598,6 +713,13 @@ public partial class RemoteDesktopViewModel : ViewModelBase
                 }
                 Status = "已连接";
 
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var e2e = (int)Math.Clamp(nowMs - chunk.TsMs, 0, 5000);
+                var prev = Volatile.Read(ref _e2eEmaMs);
+                var ema = prev == 0 ? e2e : (prev * 9 + e2e) / 10;
+                Volatile.Write(ref _e2eEmaMs, ema);
+                Latency = $"{ema} ms";
+
                 if (windowStart.ElapsedMilliseconds >= 1000)
                 {
                     var mbps = bytesInWindow * 8.0 / 1_000_000.0;
@@ -630,6 +752,24 @@ public partial class RemoteDesktopViewModel : ViewModelBase
         {
             try { _decoderIn?.Close(); } catch { }
         }
+    }
+
+    private void ResetDecoder()
+    {
+        try { _decoderIn?.Dispose(); } catch { }
+        try { _decoderOut?.Dispose(); } catch { }
+        try
+        {
+            if (_decoder is not null && !_decoder.HasExited)
+                _decoder.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
+        try { _decoder?.Dispose(); } catch { }
+
+        _sessionId = null;
+        Frame = null;
     }
 
     private bool TryStartDecoder(int width, int height, out string error)

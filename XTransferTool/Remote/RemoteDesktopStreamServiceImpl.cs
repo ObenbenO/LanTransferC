@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
@@ -41,7 +42,16 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             using var encoder = FfmpegHevcEncoder.Start(width, height, targetFps, request.QualityPreset ?? "");
 
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
-            var captureTask = Task.Run(() => CapturePumpAsync(capturer, encoder, targetFps, linkedCts.Token), linkedCts.Token);
+            var frameBytes = width * height * 4;
+            var frameQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+            var captureTask = Task.Run(() => CaptureLoopAsync(capturer, frameBytes, frameQueue, targetFps, linkedCts.Token), linkedCts.Token);
+            var encodeTask = Task.Run(() => EncodeLoopAsync(frameBytes, frameQueue, encoder, linkedCts.Token), linkedCts.Token);
 
             var seq = 0L;
             var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
@@ -77,7 +87,7 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
             {
                 ArrayPool<byte>.Shared.Return(buf);
                 linkedCts.Cancel();
-                try { await captureTask; } catch { }
+                try { await Task.WhenAll(captureTask, encodeTask); } catch { }
             }
         }
         catch (RpcException)
@@ -124,6 +134,89 @@ public sealed class RemoteDesktopStreamServiceImpl : RemoteDesktopStreamService.
         finally
         {
             ArrayPool<byte>.Shared.Return(frame);
+            try { encoder.Stdin.Close(); } catch { }
+        }
+    }
+
+    private static async Task CaptureLoopAsync(DesktopCapturer capturer, int frameBytes, Channel<byte[]> queue, int fps, CancellationToken ct)
+    {
+        try
+        {
+            var frameIntervalMs = 1000.0 / Math.Max(1, fps);
+            var sw = Stopwatch.StartNew();
+            long nextTick = 0;
+
+            while (!ct.IsCancellationRequested)
+            {
+                var elapsedMs = sw.Elapsed.TotalMilliseconds;
+                if (elapsedMs < nextTick)
+                {
+                    var delay = (int)Math.Max(0, Math.Min(50, nextTick - elapsedMs));
+                    if (delay > 0)
+                        await Task.Delay(delay, ct);
+                    continue;
+                }
+
+                var frame = ArrayPool<byte>.Shared.Rent(frameBytes);
+                try
+                {
+                    capturer.CaptureBgraPacked(frame);
+                }
+                catch
+                {
+                    ArrayPool<byte>.Shared.Return(frame);
+                    nextTick += (long)frameIntervalMs;
+                    continue;
+                }
+
+                if (!queue.Writer.TryWrite(frame))
+                {
+                    if (queue.Reader.TryRead(out var dropped))
+                        ArrayPool<byte>.Shared.Return(dropped);
+
+                    if (!queue.Writer.TryWrite(frame))
+                        ArrayPool<byte>.Shared.Return(frame);
+                }
+
+                nextTick += (long)frameIntervalMs;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+        finally
+        {
+            queue.Writer.TryComplete();
+        }
+    }
+
+    private static async Task EncodeLoopAsync(int frameBytes, Channel<byte[]> queue, FfmpegHevcEncoder encoder, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var frame in queue.Reader.ReadAllAsync(ct))
+            {
+                try
+                {
+                    await encoder.Stdin.WriteAsync(frame.AsMemory(0, frameBytes), ct);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(frame);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+        finally
+        {
             try { encoder.Stdin.Close(); } catch { }
         }
     }
